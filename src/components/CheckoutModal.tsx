@@ -1,92 +1,85 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useCart } from '../contexts/CartContext';
 import { STORE_CONFIG } from '../config/storeConfig';
-import type { PaymentMethod, DeliveryPaymentMethod, CardType, OrderDetails } from '../types';
 import { 
   formatCurrency, 
   generateOrderId, 
-  getWhatsAppUrl, 
   formatPhoneNumber 
 } from '../utils/formatters';
 import { 
   X, 
+  CheckCircle2, 
   Truck, 
   Store, 
-  QrCode, 
+  Clock, 
+  AlertCircle, 
+  Loader2, 
   CreditCard, 
-  Banknote, 
-  Send, 
-  CheckCircle2,
-  AlertCircle,
-  Clock,
-  Loader2
+  QrCode, 
+  Banknote,
+  ShoppingBag
 } from 'lucide-react';
+import type { FulfillmentType, PaymentMethod, DeliveryPaymentMethod, CardType } from '../types';
 
 export const CheckoutModal: React.FC = () => {
   const { 
     cart, 
     isCheckoutOpen, 
     setIsCheckoutOpen, 
-    deliveryType, 
-    setDeliveryType,
     subtotal, 
     deliveryFee, 
     total, 
     clearCart 
   } = useCart();
 
+  // Dados do Formulário
+  const [deliveryType, setDeliveryType] = useState<FulfillmentType>('delivery');
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
+  
+  // Endereço de Entrega
   const [street, setStreet] = useState('');
   const [number, setNumber] = useState('');
   const [neighborhood, setNeighborhood] = useState('');
   const [complement, setComplement] = useState('');
   const [reference, setReference] = useState('');
 
-  // 3 opções de pagamento
+  // Forma de Pagamento
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
-  
-  // Opções para pagamento na entrega
   const [deliveryPaymentMethod, setDeliveryPaymentMethod] = useState<DeliveryPaymentMethod>('card_delivery');
   const [cardType, setCardType] = useState<CardType>('credit');
   const [needsChange, setNeedsChange] = useState(false);
   const [changeForAmount, setChangeForAmount] = useState('');
-  
   const [generalNotes, setGeneralNotes] = useState('');
 
+  // Estados de Interface e Validação
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [completedOrder, setCompletedOrder] = useState<OrderDetails | null>(null);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isCheckoutOpen && !isSubmitting) {
-        setIsCheckoutOpen(false);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCheckoutOpen, setIsCheckoutOpen, isSubmitting]);
+  const [completedOrder, setCompletedOrder] = useState<any | null>(null);
 
   if (!isCheckoutOpen) return null;
 
-  const validateForm = () => {
+  const validateForm = (): boolean => {
     const errors: Record<string, string> = {};
 
     if (!customerName.trim()) {
-      errors.customerName = 'Por favor, informe seu nome';
+      errors.customerName = 'Por favor, informe seu nome completo.';
+    }
+
+    if (!customerPhone.trim() || customerPhone.replace(/\D/g, '').length < 10) {
+      errors.customerPhone = 'Informe um telefone com DDD válido.';
     }
 
     if (deliveryType === 'delivery') {
-      if (!street.trim()) errors.street = 'Informe a rua / avenida';
-      if (!number.trim()) errors.number = 'Informe o número';
-      if (!neighborhood.trim()) errors.neighborhood = 'Informe o bairro';
+      if (!street.trim()) errors.street = 'Informe o nome da rua/avenida.';
+      if (!number.trim()) errors.number = 'Informe o número.';
+      if (!neighborhood.trim()) errors.neighborhood = 'Informe o bairro.';
     }
 
     if (paymentMethod === 'delivery' && deliveryPaymentMethod === 'cash' && needsChange) {
-      const changeNum = parseFloat(changeForAmount.replace(',', '.'));
-      if (isNaN(changeNum) || changeNum <= total) {
+      const changeVal = parseFloat(changeForAmount.replace(',', '.'));
+      if (isNaN(changeVal) || changeVal <= total) {
         errors.changeFor = `O valor para troco deve ser maior que ${formatCurrency(total)}`;
       }
     }
@@ -101,63 +94,36 @@ export const CheckoutModal: React.FC = () => {
     setIsSubmitting(true);
     setErrorMessage(null);
 
-    const orderId = generateOrderId();
-    const orderNumber = `PED-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const orderNumber = `PED-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const order: OrderDetails = {
-      orderId,
+    const orderPayload = {
+      orderNumber,
       customerName: customerName.trim(),
-      customerPhone: customerPhone.trim() || undefined,
-      deliveryType,
-      address: deliveryType === 'delivery' ? {
-        street: street.trim(),
-        number: number.trim(),
-        neighborhood: neighborhood.trim(),
-        complement: complement.trim() || undefined,
-        reference: reference.trim() || undefined,
-      } : undefined,
+      customerPhone: customerPhone.trim(),
+      fulfillmentType: deliveryType,
+      street: deliveryType === 'delivery' ? street.trim() : undefined,
+      number: deliveryType === 'delivery' ? number.trim() : undefined,
+      neighborhood: deliveryType === 'delivery' ? neighborhood.trim() : undefined,
+      complement: deliveryType === 'delivery' ? complement.trim() : undefined,
       paymentMethod,
-      deliveryPaymentMethod: paymentMethod === 'delivery' ? deliveryPaymentMethod : undefined,
-      cardType: (paymentMethod === 'delivery' && deliveryPaymentMethod === 'card_delivery') ? cardType : undefined,
-      changeFor: (paymentMethod === 'delivery' && deliveryPaymentMethod === 'cash' && needsChange) 
-        ? parseFloat(changeForAmount.replace(',', '.')) 
-        : undefined,
-      generalNotes: generalNotes.trim() || undefined,
-      items: cart,
+      notes: generalNotes.trim() || undefined,
+      items: cart.map(item => ({
+        name: item.product.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.totalPrice,
+        size: item.selectedSize?.ml,
+        base: item.selectedBase?.name,
+        additionals: item.selectedAdditionals?.map(a => a.additional.name) || [],
+        notes: item.notes,
+      })),
       subtotal,
       deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
-      discount: 0,
       total,
-      status: 'awaiting_payment',
-      createdAt: new Date().toISOString()
     };
 
     try {
-      // 1. SALVAR NO BANCO DE DADOS (SUPABASE / BACKEND) EM < 1 SEGUNDO
-      const orderPayload = {
-        orderNumber,
-        customerName: customerName.trim(),
-        customerPhone: customerPhone.trim() || undefined,
-        fulfillmentType: deliveryType,
-        address: order.address,
-        paymentMethod,
-        paymentStatus: paymentMethod === 'delivery' ? 'paid_on_delivery' : 'pending',
-        notes: generalNotes.trim() || undefined,
-        items: cart.map(item => ({
-          name: item.product.name,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalPrice: item.totalPrice,
-          size: item.selectedSize?.ml,
-          base: item.selectedBase?.name,
-          additionals: item.selectedAdditionals?.map(a => a.additional.name),
-          notes: item.notes,
-        })),
-        subtotal,
-        deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
-        total,
-      };
-
+      // 1. INSERE O PEDIDO NO BANCO DE DADOS
       const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -166,56 +132,19 @@ export const CheckoutModal: React.FC = () => {
 
       const data = await res.json();
 
-      if (!res.ok && !data.success) {
-        throw new Error(data.error || 'Erro ao registrar pedido no servidor.');
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Não foi possível enviar seu pedido. Tente novamente.');
       }
 
+      // 2. SE SUCESSO: LIMPA O CARRINHO E MOSTRA A CONFIRMAÇÃO REAL
       const confirmedNumber = data.orderNumber || orderNumber;
-
-      // 2. SE FOR PAGAMENTO ONLINE COM MERCADO PAGO
-      if (paymentMethod === 'pix' || paymentMethod === 'card_online') {
-        try {
-          const prefRes = await fetch('/api/payments/create-preference', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              orderId: confirmedNumber,
-              customerName: customerName.trim(),
-              customerPhone: customerPhone.trim() || undefined,
-              deliveryType,
-              address: order.address,
-              paymentType: paymentMethod,
-              items: orderPayload.items,
-              subtotal,
-              deliveryFee: orderPayload.deliveryFee,
-              total,
-            }),
-          });
-
-          const prefData = await prefRes.json();
-
-          if (prefData.success && (prefData.initPoint || prefData.sandboxInitPoint)) {
-            sessionStorage.setItem(`order_${confirmedNumber}`, JSON.stringify(order));
-            window.location.href = prefData.initPoint || prefData.sandboxInitPoint;
-            return;
-          }
-        } catch (prefErr) {
-          console.warn('Mercado Pago preference error, displaying order confirmation screen:', prefErr);
-        }
-      }
-
-      // 3. EXIBE A TELA DE CONFIRMAÇÃO DO CLIENTE IMEDIATAMENTE
-      setCompletedOrder({ ...order, orderId: confirmedNumber });
+      setCompletedOrder({ ...orderPayload, orderId: confirmedNumber });
       clearCart();
-      setIsSubmitting(false);
 
     } catch (err: any) {
       console.error('Order creation error:', err);
-      // Fallback: garante que o cliente não fique travado
-      const whatsappUrl = getWhatsAppUrl(order, STORE_CONFIG);
-      window.open(whatsappUrl, '_blank');
-      setCompletedOrder({ ...order, orderId: orderNumber });
-      clearCart();
+      setErrorMessage(err?.message || 'Não foi possível enviar seu pedido. Tente novamente.');
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -236,10 +165,10 @@ export const CheckoutModal: React.FC = () => {
         <div className="p-4 sm:p-5 border-b border-[#ECE8F0] flex items-center justify-between bg-white shrink-0">
           <div>
             <h2 className="text-base font-bold text-[#28242A] font-['DM_Sans']">
-              {completedOrder ? 'Pedido Confirmado' : 'Finalizar Pedido'}
+              {completedOrder ? 'Pedido Enviado!' : 'Finalizar Pedido'}
             </h2>
             <p className="text-xs text-[#726C74] mt-0.5">
-              {completedOrder ? 'Registrado e enviado em tempo real ao lojista' : 'Preencha seus dados para entrega rápida'}
+              {completedOrder ? 'Recebido pela açaiteria' : 'Preencha seus dados para entrega rápida'}
             </p>
           </div>
 
@@ -252,7 +181,7 @@ export const CheckoutModal: React.FC = () => {
           </button>
         </div>
 
-        {/* TELA DE CONFIRMAÇÃO DO CLIENTE */}
+        {/* TELA DE CONFIRMAÇÃO REAL DO CLIENTE */}
         {completedOrder ? (
           <div className="p-6 text-center space-y-5 overflow-y-auto">
             <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-100 shadow-2xs">
@@ -261,50 +190,63 @@ export const CheckoutModal: React.FC = () => {
 
             <div className="space-y-1">
               <h3 className="text-xl font-bold text-[#28242A] font-['DM_Sans']">
-                Pedido recebido!
+                Pedido enviado para a loja!
               </h3>
               <p className="text-xs sm:text-sm text-[#726C74]">
-                Seu pedido foi registrado no sistema e já apareceu no painel em tempo real da açaiteria.
+                Número do pedido: <strong className="text-[#28242A]">#{completedOrder.orderId}</strong>
               </p>
             </div>
 
-            <div className="bg-[#FCFAF7] p-4 rounded-xl border border-[#ECE8F0] text-xs text-[#726C74] text-left space-y-2">
+            <div className="bg-[#FCFAF7] p-4 rounded-xl border border-[#ECE8F0] text-xs text-[#726C74] text-left space-y-2.5">
               <div className="flex justify-between items-center pb-2 border-b border-[#ECE8F0]">
-                <span>Número do pedido:</span>
-                <span className="font-extrabold text-sm text-[#28242A] font-['DM_Sans']">#{completedOrder.orderId}</span>
+                <span>Cliente:</span>
+                <span className="font-bold text-[#28242A]">{completedOrder.customerName}</span>
               </div>
-              <p><strong>Cliente:</strong> {completedOrder.customerName}</p>
-              <p><strong>Tipo:</strong> {completedOrder.deliveryType === 'delivery' ? '🛵 Entrega' : '🏪 Retirada no balcão'}</p>
-              {completedOrder.deliveryType === 'delivery' && completedOrder.address && (
-                <p><strong>Endereço:</strong> {completedOrder.address.street}, Nº {completedOrder.address.number} - {completedOrder.address.neighborhood}</p>
+
+              <div>
+                <p className="font-bold text-[#28242A] mb-1">Produtos:</p>
+                <div className="space-y-1">
+                  {completedOrder.items.map((it: any, idx: number) => (
+                    <div key={idx} className="flex justify-between text-[#726C74]">
+                      <span>{it.quantity}x {it.name} {it.size ? `(${it.size})` : ''}</span>
+                      <span className="font-semibold text-[#28242A]">{formatCurrency(it.totalPrice)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-2 border-t border-[#ECE8F0]">
+                <span>Modalidade:</span>
+                <span className="font-bold text-[#28242A]">
+                  {completedOrder.fulfillmentType === 'delivery' ? '🛵 Entrega em domicílio' : '🏪 Retirada no balcão'}
+                </span>
+              </div>
+
+              {completedOrder.fulfillmentType === 'delivery' && completedOrder.street && (
+                <p>
+                  <strong>Endereço:</strong> {completedOrder.street}, Nº {completedOrder.number} - {completedOrder.neighborhood}
+                  {completedOrder.complement ? ` (${completedOrder.complement})` : ''}
+                </p>
               )}
+
               <div className="flex items-center gap-1.5 pt-1">
                 <Clock className="w-3.5 h-3.5 text-[#69318A]" />
                 <span><strong>Tempo estimado:</strong> {STORE_CONFIG.delivery.estimatedTime}</span>
               </div>
-              <div className="flex justify-between items-center pt-2 border-t border-[#ECE8F0]">
+
+              <div className="flex justify-between items-center pt-2 border-t border-[#ECE8F0] font-['DM_Sans']">
                 <span>Total:</span>
-                <span className="font-bold text-sm text-[#49245B]">{formatCurrency(completedOrder.total)}</span>
+                <span className="font-extrabold text-sm text-[#49245B]">{formatCurrency(completedOrder.total)}</span>
               </div>
             </div>
 
-            <div className="space-y-2 pt-1">
-              <a
-                href={getWhatsAppUrl(completedOrder, STORE_CONFIG)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full h-11 bg-white hover:bg-[#F3EDF6] text-[#69318A] border border-[#ECE8F0] text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
-              >
-                <Send className="w-4 h-4 stroke-[1.8]" />
-                <span>Acompanhar pelo WhatsApp (Opcional)</span>
-              </a>
-
+            <div className="pt-2">
               <button
                 type="button"
                 onClick={handleCloseAll}
-                className="w-full py-2.5 text-xs text-[#726C74] hover:text-[#28242A] text-center cursor-pointer transition-colors"
+                className="w-full h-11 bg-[#69318A] hover:bg-[#572185] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
               >
-                Voltar ao cardápio
+                Voltar ao Cardápio
               </button>
             </div>
           </div>
@@ -314,8 +256,8 @@ export const CheckoutModal: React.FC = () => {
             
             {/* Mensagem de Erro */}
             {errorMessage && (
-              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 stroke-[1.8]" />
+              <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5 stroke-[1.8]" />
                 <span>{errorMessage}</span>
               </div>
             )}
@@ -385,15 +327,25 @@ export const CheckoutModal: React.FC = () => {
 
               <div>
                 <label className="block text-xs text-[#726C74] mb-1">
-                  Telefone / WhatsApp (Opcional)
+                  Telefone / WhatsApp <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="tel"
                   placeholder="(13) 99999-9999"
                   value={customerPhone}
-                  onChange={(e) => setCustomerPhone(formatPhoneNumber(e.target.value))}
-                  className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all"
+                  onChange={(e) => {
+                    setCustomerPhone(formatPhoneNumber(e.target.value));
+                    if (formErrors.customerPhone) {
+                      setFormErrors(prev => ({ ...prev, customerPhone: '' }));
+                    }
+                  }}
+                  className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all ${
+                    formErrors.customerPhone ? 'border-red-400 bg-red-50/20' : 'border-[#ECE8F0] focus:border-[#69318A]'
+                  }`}
                 />
+                {formErrors.customerPhone && (
+                  <p className="text-[11px] text-red-500 mt-1">{formErrors.customerPhone}</p>
+                )}
               </div>
             </div>
 
@@ -411,10 +363,10 @@ export const CheckoutModal: React.FC = () => {
                     </label>
                     <input
                       type="text"
-                      placeholder="Ex: Rua das Flores"
+                      placeholder="Ex: Av. Ana Costa"
                       value={street}
                       onChange={(e) => setStreet(e.target.value)}
-                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all ${
+                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none ${
                         formErrors.street ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
                       }`}
                     />
@@ -429,51 +381,38 @@ export const CheckoutModal: React.FC = () => {
                       placeholder="123"
                       value={number}
                       onChange={(e) => setNumber(e.target.value)}
-                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all ${
+                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none ${
                         formErrors.number ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
                       }`}
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs text-[#726C74] mb-1">
-                    Bairro <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Bairro"
-                    value={neighborhood}
-                    onChange={(e) => setNeighborhood(e.target.value)}
-                    className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all ${
-                      formErrors.neighborhood ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
-                    }`}
-                  />
-                </div>
-
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs text-[#726C74] mb-1">
-                      Complemento (Opcional)
+                      Bairro <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="text"
-                      placeholder="Apto 12, Bloco B"
-                      value={complement}
-                      onChange={(e) => setComplement(e.target.value)}
-                      className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none"
+                      placeholder="Ex: Gonzaga"
+                      value={neighborhood}
+                      onChange={(e) => setNeighborhood(e.target.value)}
+                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none ${
+                        formErrors.neighborhood ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
+                      }`}
                     />
                   </div>
 
                   <div>
                     <label className="block text-xs text-[#726C74] mb-1">
-                      Ponto de referência (Opcional)
+                      Complemento
                     </label>
                     <input
                       type="text"
-                      placeholder="Próximo à praça"
-                      value={reference}
-                      onChange={(e) => setReference(e.target.value)}
+                      placeholder="Apt 42 / Bloco B"
+                      value={complement}
+                      onChange={(e) => setComplement(e.target.value)}
                       className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none"
                     />
                   </div>
@@ -481,168 +420,62 @@ export const CheckoutModal: React.FC = () => {
               </div>
             )}
 
-            {/* SEÇÃO DE PAGAMENTO */}
+            {/* Forma de Pagamento */}
             <div className="space-y-3 pt-3 border-t border-[#ECE8F0]">
               <h3 className="text-xs font-semibold text-[#28242A] uppercase tracking-wider">
                 Forma de Pagamento
               </h3>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                
-                {/* CARD 1: PIX */}
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('pix')}
-                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-center transition-all cursor-pointer ${
                     paymentMethod === 'pix'
-                      ? 'border-[#69318A] bg-[#F3EDF6] ring-1 ring-[#69318A]'
-                      : 'border-[#ECE8F0] bg-white hover:border-[#D8CFE3]'
+                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A] shadow-2xs'
+                      : 'border-[#ECE8F0] bg-white text-[#726C74] hover:text-[#28242A]'
                   }`}
                 >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <div className={`p-1.5 rounded-lg ${paymentMethod === 'pix' ? 'bg-[#69318A] text-white' : 'bg-[#FCFAF7] text-[#69318A]'}`}>
-                      <QrCode className="w-4 h-4 stroke-[1.8]" />
-                    </div>
-                    <span className="text-xs font-bold text-[#28242A] font-['DM_Sans']">PIX</span>
-                  </div>
-                  <p className="text-[11px] text-[#726C74] leading-tight">
-                    Pagamento rápido e seguro.
-                  </p>
+                  <QrCode className="w-5 h-5 stroke-[1.8]" />
+                  <span className="text-xs font-bold">Pix</span>
                 </button>
 
-                {/* CARD 2: CARTÃO */}
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('card_online')}
-                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-center transition-all cursor-pointer ${
                     paymentMethod === 'card_online'
-                      ? 'border-[#69318A] bg-[#F3EDF6] ring-1 ring-[#69318A]'
-                      : 'border-[#ECE8F0] bg-white hover:border-[#D8CFE3]'
+                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A] shadow-2xs'
+                      : 'border-[#ECE8F0] bg-white text-[#726C74] hover:text-[#28242A]'
                   }`}
                 >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <div className={`p-1.5 rounded-lg ${paymentMethod === 'card_online' ? 'bg-[#69318A] text-white' : 'bg-[#FCFAF7] text-[#69318A]'}`}>
-                      <CreditCard className="w-4 h-4 stroke-[1.8]" />
-                    </div>
-                    <span className="text-xs font-bold text-[#28242A] font-['DM_Sans']">CARTÃO</span>
-                  </div>
-                  <p className="text-[11px] text-[#726C74] leading-tight">
-                    Pague pelo cartão de crédito/débito.
-                  </p>
+                  <CreditCard className="w-5 h-5 stroke-[1.8]" />
+                  <span className="text-xs font-bold">Cartão</span>
                 </button>
 
-                {/* CARD 3: NA ENTREGA */}
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('delivery')}
-                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  className={`p-3 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-center transition-all cursor-pointer ${
                     paymentMethod === 'delivery'
-                      ? 'border-[#69318A] bg-[#F3EDF6] ring-1 ring-[#69318A]'
-                      : 'border-[#ECE8F0] bg-white hover:border-[#D8CFE3]'
+                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A] shadow-2xs'
+                      : 'border-[#ECE8F0] bg-white text-[#726C74] hover:text-[#28242A]'
                   }`}
                 >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <div className={`p-1.5 rounded-lg ${paymentMethod === 'delivery' ? 'bg-[#69318A] text-white' : 'bg-[#FCFAF7] text-[#69318A]'}`}>
-                      <Banknote className="w-4 h-4 stroke-[1.8]" />
-                    </div>
-                    <span className="text-xs font-bold text-[#28242A] font-['DM_Sans']">NA ENTREGA</span>
-                  </div>
-                  <p className="text-[11px] text-[#726C74] leading-tight">
-                    Pague em dinheiro ou cartão ao receber.
-                  </p>
+                  <Banknote className="w-5 h-5 stroke-[1.8]" />
+                  <span className="text-xs font-bold">Na Entrega</span>
                 </button>
-
               </div>
-
-              {/* Opções extras para pagamento na entrega */}
-              {paymentMethod === 'delivery' && (
-                <div className="p-3 bg-[#FCFAF7] rounded-xl border border-[#ECE8F0] space-y-3">
-                  <p className="text-xs font-medium text-[#28242A]">Escolha como vai pagar na entrega:</p>
-                  
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-1.5 text-xs text-[#28242A] cursor-pointer">
-                      <input
-                        type="radio"
-                        name="deliveryPaymentMethod"
-                        checked={deliveryPaymentMethod === 'card_delivery'}
-                        onChange={() => setDeliveryPaymentMethod('card_delivery')}
-                      />
-                      <span>Cartão (levar maquininha)</span>
-                    </label>
-
-                    <label className="flex items-center gap-1.5 text-xs text-[#28242A] cursor-pointer">
-                      <input
-                        type="radio"
-                        name="deliveryPaymentMethod"
-                        checked={deliveryPaymentMethod === 'cash'}
-                        onChange={() => setDeliveryPaymentMethod('cash')}
-                      />
-                      <span>Dinheiro</span>
-                    </label>
-                  </div>
-
-                  {deliveryPaymentMethod === 'card_delivery' && (
-                    <div className="flex gap-4 pt-1 border-t border-[#ECE8F0]">
-                      <label className="flex items-center gap-1.5 text-xs text-[#726C74] cursor-pointer">
-                        <input
-                          type="radio"
-                          name="cardType"
-                          checked={cardType === 'credit'}
-                          onChange={() => setCardType('credit')}
-                        />
-                        <span>Crédito</span>
-                      </label>
-                      <label className="flex items-center gap-1.5 text-xs text-[#726C74] cursor-pointer">
-                        <input
-                          type="radio"
-                          name="cardType"
-                          checked={cardType === 'debit'}
-                          onChange={() => setCardType('debit')}
-                        />
-                        <span>Débito</span>
-                      </label>
-                    </div>
-                  )}
-
-                  {deliveryPaymentMethod === 'cash' && (
-                    <div className="pt-1 border-t border-[#ECE8F0] space-y-2">
-                      <label className="flex items-center gap-2 text-xs text-[#28242A] cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={needsChange}
-                          onChange={(e) => setNeedsChange(e.target.checked)}
-                        />
-                        <span>Precisa de troco?</span>
-                      </label>
-
-                      {needsChange && (
-                        <div>
-                          <input
-                            type="text"
-                            placeholder={`Ex: 50,00 (Total: ${formatCurrency(total)})`}
-                            value={changeForAmount}
-                            onChange={(e) => setChangeForAmount(e.target.value)}
-                            className="w-full p-2 bg-white border border-[#ECE8F0] rounded-lg text-xs outline-none"
-                          />
-                          {formErrors.changeFor && (
-                            <p className="text-[11px] text-red-500 mt-1">{formErrors.changeFor}</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
 
-            {/* Observações Gerais */}
+            {/* Observações */}
             <div className="pt-3 border-t border-[#ECE8F0]">
               <label className="block text-xs font-semibold text-[#28242A] uppercase tracking-wider mb-1">
                 Observações do Pedido (Opcional)
               </label>
               <textarea
                 rows={2}
-                placeholder="Ex: Tocar o interfone 102..."
+                placeholder="Ex: Pouco leite condensado, interfone 42..."
                 value={generalNotes}
                 onChange={(e) => setGeneralNotes(e.target.value)}
                 className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none resize-none"
@@ -682,7 +515,7 @@ export const CheckoutModal: React.FC = () => {
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Salvando pedido...</span>
+                  <span>Enviando pedido para a loja...</span>
                 </>
               ) : (
                 <>

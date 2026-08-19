@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { formatCurrency } from '../../utils/formatters';
+import { supabase } from '../../services/supabaseClient';
 import { 
   ShoppingBag, 
   Clock, 
@@ -7,7 +8,6 @@ import {
   Truck, 
   ChefHat, 
   XCircle, 
-  Send, 
   Phone, 
   Search, 
   RefreshCw, 
@@ -15,75 +15,59 @@ import {
   VolumeX, 
   Printer, 
   Sliders, 
-  Store, 
   LogOut, 
   PackageCheck, 
-  BellRing, 
-  X, 
-  Plus, 
-  Edit2, 
-  Trash2, 
-  DollarSign, 
-  TrendingUp, 
-  Layers 
+  Layers, 
+  Check, 
+  X 
 } from 'lucide-react';
-import { INITIAL_PRODUCTS, ALL_ADDITIONALS } from '../../data/mockProducts';
+import { INITIAL_PRODUCTS } from '../../data/mockProducts';
 import type { Product } from '../../types';
 
-interface OrderAddon {
-  addon_name: string;
-  addon_price: number;
+export interface OrderItem {
+  name: string;
   quantity: number;
-}
-
-interface OrderItem {
-  id?: string;
-  product_name: string;
+  unitPrice: number;
+  totalPrice: number;
   size?: string;
   base?: string;
-  quantity: number;
-  unit_price: number;
-  total_price: number;
+  additionals?: string[];
   notes?: string;
-  addons?: OrderAddon[];
 }
 
-export interface FullOrder {
+export interface RealOrder {
   id?: string;
   order_number: string;
   customer_name: string;
   customer_phone?: string;
   fulfillment_type: 'delivery' | 'pickup';
-  address_street?: string;
-  address_number?: string;
-  address_neighborhood?: string;
-  address_complement?: string;
-  address_reference?: string;
+  street?: string;
+  number?: string;
+  neighborhood?: string;
+  complement?: string;
+  items: OrderItem[];
   subtotal: number;
   delivery_fee: number;
   total: number;
-  payment_method: 'pix' | 'card_online' | 'delivery';
-  payment_status: 'pending' | 'paid' | 'paid_on_delivery' | 'rejected';
-  status: 'novo' | 'confirmado' | 'em_preparo' | 'saiu_para_entrega' | 'entregue' | 'cancelado';
+  payment_method: string;
+  status: 'new' | 'confirmed' | 'preparing' | 'delivering' | 'done' | 'cancelled';
   notes?: string;
-  whatsapp_status?: string;
   created_at: string;
-  confirmed_at?: string;
-  items?: OrderItem[];
+  updated_at?: string;
 }
 
-const STATUS_MAP: Record<FullOrder['status'], { label: string; bg: string; text: string; icon: React.ComponentType<any> }> = {
-  novo: { label: 'Novo Pedido', bg: 'bg-purple-100', text: 'text-[#69318A]', icon: ShoppingBag },
-  confirmado: { label: 'Confirmado', bg: 'bg-blue-100', text: 'text-blue-800', icon: CheckCircle2 },
-  em_preparo: { label: 'Em Preparo', bg: 'bg-amber-100', text: 'text-amber-800', icon: ChefHat },
-  saiu_para_entrega: { label: 'Em Entrega', bg: 'bg-indigo-100', text: 'text-indigo-800', icon: Truck },
-  entregue: { label: 'Entregue', bg: 'bg-emerald-100', text: 'text-emerald-800', icon: PackageCheck },
-  cancelado: { label: 'Cancelado', bg: 'bg-red-100', text: 'text-red-800', icon: XCircle },
+const STATUS_CONFIG: Record<RealOrder['status'], { label: string; bg: string; text: string; icon: React.ComponentType<any> }> = {
+  new: { label: 'Novo Pedido', bg: 'bg-purple-100', text: 'text-[#69318A]', icon: ShoppingBag },
+  confirmed: { label: 'Confirmado', bg: 'bg-blue-100', text: 'text-blue-800', icon: CheckCircle2 },
+  preparing: { label: 'Em Preparo', bg: 'bg-amber-100', text: 'text-amber-800', icon: ChefHat },
+  delivering: { label: 'Em Entrega', bg: 'bg-indigo-100', text: 'text-indigo-800', icon: Truck },
+  done: { label: 'Concluído', bg: 'bg-emerald-100', text: 'text-emerald-800', icon: PackageCheck },
+  cancelled: { label: 'Cancelado', bg: 'bg-red-100', text: 'text-red-800', icon: XCircle },
 };
 
 export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
   const [activeTab, setActiveTab] = useState<'pedidos' | 'cardapio' | 'configuracoes'>('pedidos');
-  const [orders, setOrders] = useState<FullOrder[]>([]);
+  const [orders, setOrders] = useState<RealOrder[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -96,8 +80,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const [estimatedTime, setEstimatedTime] = useState('30 a 45 minutos');
 
   // Gestão do Cardápio
-  const [productsList, setProductsList] = useState<Product[]>(INITIAL_PRODUCTS);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [productsList] = useState<Product[]>(INITIAL_PRODUCTS);
 
   const prevUnconfirmedCountRef = useRef<number>(0);
   const audioIntervalRef = useRef<any>(null);
@@ -127,25 +110,20 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     }
   }, [soundEnabled]);
 
-  // Carregar Pedidos
+  // Carregar Pedidos da API
   const fetchOrders = useCallback(async () => {
     try {
-      const token = sessionStorage.getItem('admin_auth_token') || 'valid';
-      const res = await fetch('/api/orders', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const res = await fetch('/api/orders');
       const data = await res.json();
       if (data.success && Array.isArray(data.orders)) {
-        const newCount = data.orders.filter((o: FullOrder) => o.status === 'novo').length;
+        const newCount = data.orders.filter((o: RealOrder) => o.status === 'new').length;
         
-        // Dispara som se chegou pedido novo
         if (newCount > prevUnconfirmedCountRef.current && prevUnconfirmedCountRef.current !== 0) {
           playAlertSound();
         }
         prevUnconfirmedCountRef.current = newCount;
         setOrders(data.orders);
 
-        // Atualizar título da aba do navegador
         if (newCount > 0) {
           document.title = `(${newCount}) 🔔 Novo Pedido! - Açaí Puro Sabor`;
         } else {
@@ -153,44 +131,64 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         }
       }
     } catch (err) {
-      console.error('Error loading orders:', err);
+      console.error('Error fetching orders:', err);
     } finally {
       setIsLoading(false);
     }
   }, [playAlertSound]);
 
-  // Carregar Configurações
-  const fetchSettings = async () => {
-    try {
-      const res = await fetch('/api/settings');
-      const data = await res.json();
-      if (data.success && data.settings) {
-        setIsOpenStore(data.settings.is_open);
-        setDeliveryFee(data.settings.delivery_fee);
-        setFreeThreshold(data.settings.free_delivery_threshold);
-        setEstimatedTime(data.settings.estimated_delivery_time);
-      }
-    } catch (e) {
-      console.warn('Settings load error:', e);
-    }
-  };
-
+  // Supabase Realtime Subscription + Polling Fallback
   useEffect(() => {
     setIsLoading(true);
     fetchOrders();
-    fetchSettings();
 
-    // Polling em tempo real a cada 3 segundos
+    // 1. Supabase Realtime
+    let channel: any = null;
+    if (supabase) {
+      try {
+        channel = supabase
+          .channel('pedidos-loja')
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'orders',
+            },
+            (payload) => {
+              if (payload.eventType === 'INSERT') {
+                const newOrder = payload.new as RealOrder;
+                setOrders(prev => [newOrder, ...prev.filter(o => o.id !== newOrder.id && o.order_number !== newOrder.order_number)]);
+                playAlertSound();
+              } else if (payload.eventType === 'UPDATE') {
+                const updated = payload.new as RealOrder;
+                setOrders(prev => prev.map(o => (o.id === updated.id || o.order_number === updated.order_number) ? updated : o));
+              }
+            }
+          )
+          .subscribe();
+      } catch (e) {
+        console.warn('Supabase realtime error:', e);
+      }
+    }
+
+    // 2. Polling contínuo a cada 3 segundos
     const interval = setInterval(fetchOrders, 3000);
-    return () => clearInterval(interval);
-  }, [fetchOrders]);
 
-  // Alerta sonoro repetido enquanto houver pedido novo sem confirmação
+    return () => {
+      clearInterval(interval);
+      if (channel && supabase) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [fetchOrders, playAlertSound]);
+
+  // Alerta sonoro repetido enquanto houver pedido novo pendente
   useEffect(() => {
-    const unconfirmed = orders.filter(o => o.status === 'novo');
+    const unconfirmed = orders.filter(o => o.status === 'new');
     if (soundEnabled && unconfirmed.length > 0) {
       if (!audioIntervalRef.current) {
-        audioIntervalRef.current = setInterval(playAlertSound, 12000);
+        audioIntervalRef.current = setInterval(playAlertSound, 10000);
       }
     } else {
       if (audioIntervalRef.current) {
@@ -206,10 +204,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     };
   }, [orders, soundEnabled, playAlertSound]);
 
-  // Atualizar Status do Pedido
-  const handleUpdateStatus = async (orderId: string, newStatus: FullOrder['status']) => {
+  // Atualizar Status do Pedido no Banco de Dados
+  const handleUpdateStatus = async (orderId: string, newStatus: RealOrder['status']) => {
     try {
-      // Atualização otimista imediata
+      // Atualização otimista imediata na interface
       setOrders(prev => prev.map(o => (o.id === orderId || o.order_number === orderId) ? { ...o, status: newStatus } : o));
 
       await fetch('/api/orders/update-status', {
@@ -222,37 +220,18 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     }
   };
 
-  // Salvar Configurações da Loja
-  const handleSaveSettings = async () => {
-    try {
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          is_open: isOpenStore,
-          delivery_fee: deliveryFee,
-          free_delivery_threshold: freeThreshold,
-          estimated_delivery_time: estimatedTime,
-        }),
-      });
-      alert('Configurações salvas com sucesso!');
-    } catch (e) {
-      console.error('Error saving settings:', e);
-    }
-  };
-
-  // Imprimir Pedido (Formato Cupom Térmico 80mm)
-  const handlePrintOrder = (order: FullOrder) => {
+  // Imprimir Cupom Térmico (80mm)
+  const handlePrintOrder = (order: RealOrder) => {
     const printWindow = window.open('', '_blank', 'width=400,height=600');
     if (!printWindow) return;
 
     const itemsHtml = (order.items || []).map(item => `
       <div style="margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px dashed #ccc;">
-        <strong>${item.quantity}x ${item.product_name} ${item.size ? `(${item.size})` : ''}</strong>
+        <strong>${item.quantity}x ${item.name} ${item.size ? `(${item.size})` : ''}</strong>
         ${item.base ? `<div style="font-size: 11px;">Base: ${item.base}</div>` : ''}
-        ${item.addons && item.addons.length > 0 ? `<div style="font-size: 11px;">Adicionais: ${item.addons.map(a => a.addon_name).join(', ')}</div>` : ''}
+        ${item.additionals && item.additionals.length > 0 ? `<div style="font-size: 11px;">Adicionais: ${item.additionals.join(', ')}</div>` : ''}
         ${item.notes ? `<div style="font-size: 11px; font-style: italic;">Obs: ${item.notes}</div>` : ''}
-        <div style="text-align: right; font-weight: bold;">${formatCurrency(item.total_price || item.unit_price)}</div>
+        <div style="text-align: right; font-weight: bold;">${formatCurrency(item.totalPrice || item.unitPrice)}</div>
       </div>
     `).join('');
 
@@ -277,7 +256,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           <div><strong>CLIENTE:</strong> ${order.customer_name}</div>
           <div><strong>TELEFONE:</strong> ${order.customer_phone || 'Não informado'}</div>
           <div><strong>TIPO:</strong> ${order.fulfillment_type === 'delivery' ? 'ENTREGA' : 'RETIRADA'}</div>
-          ${order.address_street ? `<div><strong>ENDEREÇO:</strong> ${order.address_street}, ${order.address_number || ''} - ${order.address_neighborhood || ''} ${order.address_complement || ''}</div>` : ''}
+          ${order.street ? `<div><strong>ENDEREÇO:</strong> ${order.street}, Nº ${order.number || 'S/N'} - ${order.neighborhood || ''} ${order.complement ? `(${order.complement})` : ''}</div>` : ''}
           <div class="divider"></div>
           <div><strong>ITENS DO PEDIDO:</strong></div>
           ${itemsHtml}
@@ -300,13 +279,12 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     }, 300);
   };
 
-  // Métricas do Dia
-  const todayOrders = orders;
-  const countNew = todayOrders.filter(o => o.status === 'novo').length;
-  const countPreparing = todayOrders.filter(o => o.status === 'em_preparo').length;
-  const countDelivering = todayOrders.filter(o => o.status === 'saiu_para_entrega').length;
-  const countDone = todayOrders.filter(o => o.status === 'entregue').length;
-  const totalRevenue = todayOrders.filter(o => o.status !== 'cancelado').reduce((sum, o) => sum + Number(o.total || 0), 0);
+  // Métricas em Tempo Real
+  const countNew = orders.filter(o => o.status === 'new').length;
+  const countPreparing = orders.filter(o => o.status === 'preparing' || o.status === 'confirmed').length;
+  const countDelivering = orders.filter(o => o.status === 'delivering').length;
+  const countDone = orders.filter(o => o.status === 'done').length;
+  const totalRevenue = orders.filter(o => o.status !== 'cancelled').reduce((sum, o) => sum + Number(o.total || 0), 0);
 
   // Filtragem de Pedidos
   const filteredOrders = orders.filter(order => {
@@ -316,7 +294,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
       order.order_number.toLowerCase().includes(q) ||
       order.customer_name.toLowerCase().includes(q) ||
       (order.customer_phone && order.customer_phone.includes(q)) ||
-      (order.address_neighborhood && order.address_neighborhood.toLowerCase().includes(q));
+      (order.neighborhood && order.neighborhood.toLowerCase().includes(q));
 
     return matchesStatus && matchesSearch;
   });
@@ -327,7 +305,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
       {/* SIDEBAR LATERAL */}
       <aside className="w-full md:w-64 bg-[#30143D] text-white flex flex-col justify-between shrink-0 p-5 shadow-xl">
         <div className="space-y-6">
-          {/* Logo / Título */}
           <div className="flex items-center gap-3 pb-4 border-b border-white/10">
             <div className="w-10 h-10 rounded-xl bg-[#803FA0] text-white flex items-center justify-center font-bold">
               <ShoppingBag className="w-5 h-5" />
@@ -338,7 +315,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
             </div>
           </div>
 
-          {/* Navegação */}
           <nav className="space-y-1.5">
             <button
               onClick={() => setActiveTab('pedidos')}
@@ -385,7 +361,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </nav>
         </div>
 
-        {/* Status da Loja & Logout */}
         <div className="pt-6 border-t border-white/10 space-y-3">
           <div className="p-3 bg-white/5 rounded-xl border border-white/10 text-xs flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -419,7 +394,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
             <h2 className="text-lg font-bold text-[#28242A] font-['DM_Sans']">
               {activeTab === 'pedidos' ? 'Gestão de Pedidos em Tempo Real' : activeTab === 'cardapio' ? 'Catálogo & Cardápio Digital' : 'Configurações Operacionais'}
             </h2>
-            <p className="text-xs text-[#726C74]">Sincronização instantânea com dispositivos dos clientes</p>
+            <p className="text-xs text-[#726C74]">Conectado diretamente ao banco de dados Supabase PostgreSQL</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -434,7 +409,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   ? 'text-[#69318A] border-purple-200 bg-purple-50 shadow-2xs' 
                   : 'text-gray-400 border-gray-200 bg-white'
               }`}
-              title="Ativar ou desativar som de novos pedidos"
             >
               {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
               <span>{soundEnabled ? 'Som Ativo' : 'Ativar Som'}</span>
@@ -455,7 +429,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         {activeTab === 'pedidos' && (
           <div className="p-4 sm:p-8 space-y-6">
             
-            {/* RESUMO DO DIA (INDICADORES) */}
+            {/* INDICADORES DO PAINEL */}
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 sm:gap-4">
               <div className="bg-white p-4 rounded-2xl border border-[#ECE8F0] shadow-xs">
                 <span className="text-[11px] font-bold text-[#726C74] uppercase block">Novos</span>
@@ -495,12 +469,12 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
                 {[
                   { id: 'all', label: 'Todos', count: orders.length },
-                  { id: 'novo', label: 'Novos', count: countNew, isAlert: true },
-                  { id: 'confirmado', label: 'Confirmados', count: orders.filter(o => o.status === 'confirmado').length },
-                  { id: 'em_preparo', label: 'Em Preparo', count: countPreparing },
-                  { id: 'saiu_para_entrega', label: 'Em Entrega', count: countDelivering },
-                  { id: 'entregue', label: 'Entregues', count: countDone },
-                  { id: 'cancelado', label: 'Cancelados', count: orders.filter(o => o.status === 'cancelado').length },
+                  { id: 'new', label: 'Novos', count: countNew, isAlert: true },
+                  { id: 'confirmed', label: 'Confirmados', count: orders.filter(o => o.status === 'confirmed').length },
+                  { id: 'preparing', label: 'Em Preparo', count: orders.filter(o => o.status === 'preparing').length },
+                  { id: 'delivering', label: 'Em Entrega', count: countDelivering },
+                  { id: 'done', label: 'Concluídos', count: countDone },
+                  { id: 'cancelled', label: 'Cancelados', count: orders.filter(o => o.status === 'cancelled').length },
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -524,19 +498,19 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               </div>
             </div>
 
-            {/* LISTA DE PEDIDOS */}
+            {/* LISTA DE PEDIDOS REAIS */}
             <div className="space-y-4">
               {filteredOrders.length === 0 ? (
                 <div className="bg-white p-12 rounded-3xl border border-[#ECE8F0] text-center space-y-2">
                   <ShoppingBag className="w-12 h-12 text-[#ECE8F0] mx-auto" />
                   <h3 className="text-base font-bold text-[#28242A]">Nenhum pedido encontrado</h3>
-                  <p className="text-xs text-[#726C74]">Quando novos pedidos forem realizados, eles aparecerão aqui instantaneamente em tempo real.</p>
+                  <p className="text-xs text-[#726C74]">Quando o cliente confirmar um pedido pelo site, ele aparecerá aqui instantaneamente.</p>
                 </div>
               ) : (
                 filteredOrders.map(order => {
-                  const statusInfo = STATUS_MAP[order.status] || STATUS_MAP.novo;
+                  const statusInfo = STATUS_CONFIG[order.status] || STATUS_CONFIG.new;
                   const StatusIcon = statusInfo.icon;
-                  const isNew = order.status === 'novo';
+                  const isNew = order.status === 'new';
 
                   return (
                     <div
@@ -588,14 +562,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                             <div className="flex items-center gap-2 text-[#726C74]">
                               <Phone className="w-3.5 h-3.5 text-[#69318A]" />
                               <span>{order.customer_phone}</span>
-                              <a
-                                href={`https://wa.me/55${order.customer_phone.replace(/\D/g, '')}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-[#69318A] hover:underline font-bold"
-                              >
-                                Conversar no WhatsApp
-                              </a>
                             </div>
                           )}
                         </div>
@@ -604,10 +570,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                           <p className="font-bold text-[#28242A]">
                             {order.fulfillment_type === 'delivery' ? '🛵 Entrega em domicílio' : '🏪 Retirada no balcão'}
                           </p>
-                          {order.fulfillment_type === 'delivery' && (order.address_street || order.address_neighborhood) && (
+                          {order.fulfillment_type === 'delivery' && (order.street || order.neighborhood) && (
                             <p className="line-clamp-2">
-                              {order.address_street}, Nº {order.address_number || 'S/N'} - {order.address_neighborhood}
-                              {order.address_complement ? ` (${order.address_complement})` : ''}
+                              {order.street}, Nº {order.number || 'S/N'} - {order.neighborhood}
+                              {order.complement ? ` (${order.complement})` : ''}
                             </p>
                           )}
                         </div>
@@ -615,20 +581,20 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
 
                       {/* Itens do Pedido */}
                       <div className="bg-[#FCFAF7] p-4 rounded-2xl border border-[#ECE8F0] space-y-3">
-                        <p className="text-[11px] font-bold text-[#726C74] uppercase tracking-wider">Itens e Adicionais</p>
-                        <div className="space-y-2.5 divide-y divide-[#ECE8F0]/80">
+                        <p className="text-[11px] font-bold text-[#726C74] uppercase tracking-wider">Produtos e Adicionais</p>
+                        <div className="space-y-2 divide-y divide-[#ECE8F0]/80">
                           {(order.items || []).map((item, idx) => (
                             <div key={idx} className={`pt-2 text-xs ${idx === 0 ? 'pt-0' : ''}`}>
                               <div className="flex justify-between font-bold text-[#28242A]">
-                                <span>{item.quantity}x {item.product_name} {item.size ? `(${item.size})` : ''}</span>
-                                <span>{formatCurrency(item.total_price || item.unit_price)}</span>
+                                <span>{item.quantity}x {item.name} {item.size ? `(${item.size})` : ''}</span>
+                                <span>{formatCurrency(item.totalPrice || item.unitPrice)}</span>
                               </div>
-                              {item.base && item.base !== 'Açaí tradicional' && (
+                              {item.base && (
                                 <p className="text-[11px] text-[#726C74]">Base: {item.base}</p>
                               )}
-                              {item.addons && item.addons.length > 0 && (
+                              {item.additionals && item.additionals.length > 0 && (
                                 <p className="text-[11px] text-[#69318A] font-medium">
-                                  Adicionais: {item.addons.map(a => a.addon_name).join(', ')}
+                                  Adicionais: {item.additionals.join(', ')}
                                 </p>
                               )}
                               {item.notes && (
@@ -645,10 +611,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                         )}
                       </div>
 
-                      {/* Resumo Financeiro */}
+                      {/* Resumo Financeiro & Ações */}
                       <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs">
                         <div className="flex items-center gap-2">
-                          <span className="text-[#726C74]">Total do Pedido:</span>
+                          <span className="text-[#726C74]">Total:</span>
                           <span className="text-lg font-black text-[#49245B] font-['DM_Sans']">
                             {formatCurrency(order.total)}
                           </span>
@@ -657,51 +623,51 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                           </span>
                         </div>
 
-                        {/* Botões de Ação de Status com 1 Clique */}
+                        {/* Ações do Lojista */}
                         <div className="flex flex-wrap items-center gap-2">
                           {isNew && (
                             <button
-                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'confirmado')}
-                              className="px-4 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'confirmed')}
+                              className="px-3.5 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
                             >
                               <CheckCircle2 className="w-4 h-4" />
-                              <span>Confirmar Pedido</span>
+                              <span>Confirmar</span>
                             </button>
                           )}
 
-                          {order.status === 'confirmado' && (
+                          {(order.status === 'confirmed' || isNew) && (
                             <button
-                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'em_preparo')}
+                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'preparing')}
                               className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                             >
                               <ChefHat className="w-4 h-4" />
-                              <span>Iniciar Preparo</span>
+                              <span>Em preparo</span>
                             </button>
                           )}
 
-                          {order.status === 'em_preparo' && (
+                          {order.status === 'preparing' && (
                             <button
-                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'saiu_para_entrega')}
+                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'delivering')}
                               className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                             >
                               <Truck className="w-4 h-4" />
-                              <span>Saiu para Entrega</span>
+                              <span>Saiu para entrega</span>
                             </button>
                           )}
 
-                          {order.status === 'saiu_para_entrega' && (
+                          {(order.status === 'delivering' || order.status === 'preparing') && (
                             <button
-                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'entregue')}
+                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'done')}
                               className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                             >
                               <PackageCheck className="w-4 h-4" />
-                              <span>Marcar como Entregue</span>
+                              <span>Concluir</span>
                             </button>
                           )}
 
-                          {order.status !== 'entregue' && order.status !== 'cancelado' && (
+                          {order.status !== 'done' && order.status !== 'cancelled' && (
                             <button
-                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'cancelado')}
+                              onClick={() => handleUpdateStatus(order.id || order.order_number, 'cancelled')}
                               className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-semibold border border-red-200 transition-all cursor-pointer"
                             >
                               Cancelar
@@ -722,18 +688,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         {/* CONTEÚDO DA ABA: GESTÃO DO CARDÁPIO */}
         {activeTab === 'cardapio' && (
           <div className="p-4 sm:p-8 space-y-6">
-            <div className="flex justify-between items-center bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <div>
-                <h3 className="text-base font-bold text-[#28242A]">Produtos do Cardápio</h3>
-                <p className="text-xs text-[#726C74]">Gerencie preços, adicionais e disponibilidade</p>
-              </div>
-              <button
-                onClick={() => alert('Para adicionar novos itens diretamente pelo painel, selecione o produto na lista para editar ou use a sincronização do banco.')}
-                className="px-4 py-2 bg-[#69318A] hover:bg-[#572185] text-white text-xs font-bold rounded-xl flex items-center gap-2 cursor-pointer shadow-xs"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Novo Produto</span>
-              </button>
+            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
+              <h3 className="text-base font-bold text-[#28242A]">Produtos do Cardápio</h3>
+              <p className="text-xs text-[#726C74]">Catálogo de produtos ativos na açaiteria</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -747,16 +704,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                       <span className="text-xs font-bold text-[#69318A] block mt-1">{formatCurrency(product.price)}</span>
                     </div>
                   </div>
-
-                  <div className="pt-2 border-t border-[#ECE8F0] flex items-center justify-between text-xs">
-                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">Disponível</span>
-                    <button
-                      onClick={() => alert(`Editando ${product.name}. Preço atual: ${formatCurrency(product.price)}`)}
-                      className="text-[#69318A] hover:underline font-bold text-[11px]"
-                    >
-                      Editar
-                    </button>
-                  </div>
                 </div>
               ))}
             </div>
@@ -768,10 +715,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           <div className="p-4 sm:p-8 max-w-2xl space-y-6">
             <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-5">
               <h3 className="text-base font-bold text-[#28242A] border-b border-[#ECE8F0] pb-3">
-                Disponibilidade e Entrega
+                Disponibilidade da Loja
               </h3>
 
-              {/* Loja Aberta/Fechada */}
               <div className="flex items-center justify-between p-4 bg-[#FCFAF7] rounded-2xl border border-[#ECE8F0]">
                 <div>
                   <span className="text-xs font-bold text-[#28242A] block">Status da Loja</span>
@@ -788,7 +734,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 </button>
               </div>
 
-              {/* Taxa de Entrega */}
               <div>
                 <label className="block text-xs font-bold text-[#726C74] mb-1">Taxa de Entrega Padrão (R$)</label>
                 <input
@@ -800,7 +745,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 />
               </div>
 
-              {/* Frete Grátis */}
               <div>
                 <label className="block text-xs font-bold text-[#726C74] mb-1">Valor Mínimo para Frete Grátis (R$)</label>
                 <input
@@ -812,7 +756,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 />
               </div>
 
-              {/* Tempo Estimado */}
               <div>
                 <label className="block text-xs font-bold text-[#726C74] mb-1">Tempo Estimado de Entrega</label>
                 <input
@@ -822,13 +765,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   className="w-full p-2.5 bg-white border border-[#ECE8F0] rounded-xl text-xs sm:text-sm outline-none"
                 />
               </div>
-
-              <button
-                onClick={handleSaveSettings}
-                className="w-full py-3 bg-[#69318A] hover:bg-[#572185] text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
-              >
-                Salvar Configurações
-              </button>
             </div>
           </div>
         )}

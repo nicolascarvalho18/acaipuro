@@ -2,12 +2,12 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { updateOrderStatusDb, DbOrder } from '../_services/db';
 
 const VALID_STATUSES: DbOrder['status'][] = [
-  'novo',
-  'confirmado',
-  'em_preparo',
-  'saiu_para_entrega',
-  'entregue',
-  'cancelado',
+  'new',
+  'confirmed',
+  'preparing',
+  'delivering',
+  'done',
+  'cancelled',
 ];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
