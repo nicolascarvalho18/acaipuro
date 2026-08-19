@@ -29,14 +29,14 @@ export const Hero: React.FC = () => {
         
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
           
-          {/* Coluna Esquerda: Conteúdo (~46%) */}
+          {/* Coluna Esquerda: Conteúdo */}
           <div className="lg:col-span-5 space-y-5 text-left">
             
             <p className="text-xs sm:text-sm font-semibold tracking-wider text-[#726C74] uppercase">
               Açaí preparado na hora
             </p>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-[56px] font-bold text-[#28242A] tracking-tight leading-[1.08] font-['DM_Sans']">
+            <h1 className="text-3xl sm:text-4xl lg:text-[50px] xl:text-[54px] font-bold text-[#28242A] tracking-tight leading-[1.12] font-['DM_Sans']">
               Seu açaí, do seu jeito.
             </h1>
 
@@ -75,13 +75,13 @@ export const Hero: React.FC = () => {
 
           </div>
 
-          {/* Coluna Direita: Fotografia Gastronômica Real (~54%) */}
+          {/* Coluna Direita: Fotografia de Açaí */}
           <div className="lg:col-span-7">
             <div className="relative rounded-[18px] overflow-hidden bg-white border border-[#ECE8F0] shadow-xs">
               <img
                 src="https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=1200&q=85"
-                alt="Tigela de açaí roxo cremoso com morangos frescos, banana fatiada e granola crocante"
-                className="w-full h-72 sm:h-[400px] lg:h-[460px] object-cover"
+                alt="Tigela de açaí artesanal com morangos frescos, banana fatiada e granola crocante"
+                className="w-full h-72 sm:h-[390px] lg:h-[450px] object-cover"
                 loading="eager"
               />
             </div>

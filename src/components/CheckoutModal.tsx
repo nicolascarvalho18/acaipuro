@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useCart } from '../contexts/CartContext';
 import { STORE_CONFIG } from '../config/storeConfig';
-import type { PaymentMethod, CardType, OrderDetails } from '../types';
+import type { PaymentMethod, DeliveryPaymentMethod, CardType, OrderDetails } from '../types';
 import { 
   formatCurrency, 
   generateOrderId, 
@@ -16,7 +16,9 @@ import {
   CreditCard, 
   Banknote, 
   Send, 
-  CheckCircle 
+  CheckCircle,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 
 export const CheckoutModal: React.FC = () => {
@@ -40,25 +42,31 @@ export const CheckoutModal: React.FC = () => {
   const [complement, setComplement] = useState('');
   const [reference, setReference] = useState('');
 
+  // 3 formas principais de pagamento
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
+  
+  // Opções para pagamento na entrega
+  const [deliveryPaymentMethod, setDeliveryPaymentMethod] = useState<DeliveryPaymentMethod>('card_delivery');
   const [cardType, setCardType] = useState<CardType>('credit');
   const [needsChange, setNeedsChange] = useState(false);
   const [changeForAmount, setChangeForAmount] = useState('');
+  
   const [generalNotes, setGeneralNotes] = useState('');
 
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [completedOrder, setCompletedOrder] = useState<OrderDetails | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isCheckoutOpen) {
+      if (e.key === 'Escape' && isCheckoutOpen && !isSubmitting) {
         setIsCheckoutOpen(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isCheckoutOpen, setIsCheckoutOpen]);
+  }, [isCheckoutOpen, setIsCheckoutOpen, isSubmitting]);
 
   if (!isCheckoutOpen) return null;
 
@@ -75,7 +83,7 @@ export const CheckoutModal: React.FC = () => {
       if (!neighborhood.trim()) errors.neighborhood = 'Informe o bairro';
     }
 
-    if (paymentMethod === 'cash' && needsChange) {
+    if (paymentMethod === 'delivery' && deliveryPaymentMethod === 'cash' && needsChange) {
       const changeNum = parseFloat(changeForAmount.replace(',', '.'));
       if (isNaN(changeNum) || changeNum <= total) {
         errors.changeFor = `O valor para troco deve ser maior que ${formatCurrency(total)}`;
@@ -86,10 +94,11 @@ export const CheckoutModal: React.FC = () => {
     return Object.keys(errors).length === 0;
   };
 
-  const handleFinishOrder = () => {
+  const handleFinishOrder = async () => {
     if (!validateForm()) return;
 
     setIsSubmitting(true);
+    setErrorMessage(null);
 
     const orderId = generateOrderId();
     const order: OrderDetails = {
@@ -105,22 +114,90 @@ export const CheckoutModal: React.FC = () => {
         reference: reference.trim() || undefined,
       } : undefined,
       paymentMethod,
-      cardType: paymentMethod === 'card_delivery' ? cardType : undefined,
-      changeFor: paymentMethod === 'cash' && needsChange ? parseFloat(changeForAmount.replace(',', '.')) : undefined,
+      deliveryPaymentMethod: paymentMethod === 'delivery' ? deliveryPaymentMethod : undefined,
+      cardType: (paymentMethod === 'delivery' && deliveryPaymentMethod === 'card_delivery') ? cardType : undefined,
+      changeFor: (paymentMethod === 'delivery' && deliveryPaymentMethod === 'cash' && needsChange) 
+        ? parseFloat(changeForAmount.replace(',', '.')) 
+        : undefined,
       generalNotes: generalNotes.trim() || undefined,
       items: cart,
       subtotal,
-      deliveryFee,
+      deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
       discount: 0,
       total,
+      status: paymentMethod === 'delivery' ? 'delivery' : 'awaiting_payment',
       createdAt: new Date().toISOString()
     };
 
-    setCompletedOrder(order);
+    // Fluxo 1: Pagamento Online (Pix ou Cartão via Mercado Pago)
+    if (paymentMethod === 'pix' || paymentMethod === 'card_online') {
+      try {
+        const payload = {
+          orderId,
+          customerName: customerName.trim(),
+          customerPhone: customerPhone.trim() || undefined,
+          deliveryType,
+          address: order.address,
+          paymentType: paymentMethod,
+          items: cart.map(item => ({
+            name: item.product.name,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice: item.totalPrice,
+            size: item.selectedSize?.ml,
+            additionals: item.selectedAdditionals?.map(a => a.additional.name),
+            notes: item.notes,
+          })),
+          subtotal,
+          deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
+          total,
+        };
 
+        const res = await fetch('/api/payments/create-preference', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json();
+
+        if (data.success && (data.initPoint || data.sandboxInitPoint)) {
+          // Salvar dados do pedido no sessionStorage para exibição ao retornar
+          sessionStorage.setItem(`order_${orderId}`, JSON.stringify(order));
+          
+          // Redireciona para o Checkout Pro seguro do Mercado Pago
+          window.location.href = data.initPoint || data.sandboxInitPoint;
+          return;
+        }
+
+        // Caso as credenciais comerciais ainda não estejam cadastradas na Vercel
+        if (data.fallbackToWhatsApp) {
+          setErrorMessage('O pagamento online está sendo configurado pelo estabelecimento. Vamos encaminhar seu pedido diretamente pelo WhatsApp.');
+          setTimeout(() => {
+            const whatsappUrl = getWhatsAppUrl(order, STORE_CONFIG);
+            window.open(whatsappUrl, '_blank');
+            setCompletedOrder(order);
+            clearCart();
+            setIsSubmitting(false);
+          }, 2000);
+          return;
+        }
+
+        throw new Error(data.error || 'Não foi possível gerar a preferência de pagamento.');
+      } catch (err: any) {
+        console.error('Online payment error:', err);
+        setErrorMessage('Não foi possível conectar ao pagamento online no momento. Você pode finalizar seu pedido pelo WhatsApp.');
+        setIsSubmitting(false);
+        return;
+      }
+    }
+
+    // Fluxo 2: Pagamento na Entrega (Dinheiro ou Cartão)
+    setCompletedOrder(order);
     const whatsappUrl = getWhatsAppUrl(order, STORE_CONFIG);
     window.open(whatsappUrl, '_blank');
-
     clearCart();
     setIsSubmitting(false);
   };
@@ -157,10 +234,10 @@ export const CheckoutModal: React.FC = () => {
           </button>
         </div>
 
-        {/* TELA DE SUCESSO */}
+        {/* TELA DE SUCESSO DO WHATSAPP */}
         {completedOrder ? (
           <div className="p-6 text-center space-y-5 overflow-y-auto">
-            <div className="w-12 h-12 rounded-full bg-[#F3EDF6] text-[#69318A] flex items-center justify-center mx-auto">
+            <div className="w-12 h-12 rounded-full bg-[#F3EDF6] text-[#69318A] flex items-center justify-center mx-auto shadow-2xs">
               <CheckCircle className="w-7 h-7 stroke-[1.8]" />
             </div>
 
@@ -187,7 +264,7 @@ export const CheckoutModal: React.FC = () => {
                 href={getWhatsAppUrl(completedOrder, STORE_CONFIG)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full h-11 bg-[#69318A] hover:bg-[#572185] text-white text-xs sm:text-sm font-medium rounded-xl flex items-center justify-center gap-2 transition-all shadow-xs"
+                className="w-full h-11 bg-[#69318A] hover:bg-[#572185] text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all shadow-xs cursor-pointer"
               >
                 <Send className="w-4 h-4 stroke-[1.8]" />
                 <span>Abrir WhatsApp da Loja</span>
@@ -196,7 +273,7 @@ export const CheckoutModal: React.FC = () => {
               <button
                 type="button"
                 onClick={handleCloseAll}
-                className="w-full py-2.5 text-xs text-[#726C74] hover:text-[#28242A] text-center cursor-pointer"
+                className="w-full py-2.5 text-xs text-[#726C74] hover:text-[#28242A] text-center cursor-pointer transition-colors"
               >
                 Voltar ao cardápio
               </button>
@@ -206,6 +283,14 @@ export const CheckoutModal: React.FC = () => {
           /* FORMULÁRIO DE FINALIZAÇÃO */
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
             
+            {/* Mensagem de Erro / Alerta */}
+            {errorMessage && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 stroke-[1.8]" />
+                <span>{errorMessage}</span>
+              </div>
+            )}
+
             {/* Tipo de Recebimento */}
             <div className="space-y-2">
               <label className="block text-xs font-semibold text-[#28242A] uppercase tracking-wider">
@@ -217,7 +302,7 @@ export const CheckoutModal: React.FC = () => {
                   onClick={() => setDeliveryType('delivery')}
                   className={`p-3 rounded-xl border flex items-center justify-center gap-2 text-xs font-medium transition-all cursor-pointer ${
                     deliveryType === 'delivery'
-                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A]'
+                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A] shadow-2xs'
                       : 'border-[#ECE8F0] bg-white text-[#726C74] hover:text-[#28242A]'
                   }`}
                 >
@@ -230,7 +315,7 @@ export const CheckoutModal: React.FC = () => {
                   onClick={() => setDeliveryType('pickup')}
                   className={`p-3 rounded-xl border flex items-center justify-center gap-2 text-xs font-medium transition-all cursor-pointer ${
                     deliveryType === 'pickup'
-                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A]'
+                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A] shadow-2xs'
                       : 'border-[#ECE8F0] bg-white text-[#726C74] hover:text-[#28242A]'
                   }`}
                 >
@@ -260,7 +345,7 @@ export const CheckoutModal: React.FC = () => {
                       setFormErrors(prev => ({ ...prev, customerName: '' }));
                     }
                   }}
-                  className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none ${
+                  className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all ${
                     formErrors.customerName ? 'border-red-400 bg-red-50/20' : 'border-[#ECE8F0] focus:border-[#69318A]'
                   }`}
                 />
@@ -278,7 +363,7 @@ export const CheckoutModal: React.FC = () => {
                   placeholder="(13) 99999-9999"
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(formatPhoneNumber(e.target.value))}
-                  className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none"
+                  className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all"
                 />
               </div>
             </div>
@@ -300,7 +385,7 @@ export const CheckoutModal: React.FC = () => {
                       placeholder="Ex: Rua das Flores"
                       value={street}
                       onChange={(e) => setStreet(e.target.value)}
-                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#26222A] outline-none ${
+                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all ${
                         formErrors.street ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
                       }`}
                     />
@@ -315,7 +400,7 @@ export const CheckoutModal: React.FC = () => {
                       placeholder="123"
                       value={number}
                       onChange={(e) => setNumber(e.target.value)}
-                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#26222A] outline-none ${
+                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all ${
                         formErrors.number ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
                       }`}
                     />
@@ -331,7 +416,7 @@ export const CheckoutModal: React.FC = () => {
                     placeholder="Bairro"
                     value={neighborhood}
                     onChange={(e) => setNeighborhood(e.target.value)}
-                    className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#26222A] outline-none ${
+                    className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none transition-all ${
                       formErrors.neighborhood ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
                     }`}
                   />
@@ -347,7 +432,7 @@ export const CheckoutModal: React.FC = () => {
                       placeholder="Apto 12, Bloco B"
                       value={complement}
                       onChange={(e) => setComplement(e.target.value)}
-                      className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#26222A] outline-none"
+                      className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none"
                     />
                   </div>
 
@@ -360,116 +445,160 @@ export const CheckoutModal: React.FC = () => {
                       placeholder="Próximo à praça"
                       value={reference}
                       onChange={(e) => setReference(e.target.value)}
-                      className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#26222A] outline-none"
+                      className="w-full p-2.5 bg-white border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none"
                     />
                   </div>
                 </div>
               </div>
             )}
 
-            {/* Forma de Pagamento */}
+            {/* SEÇÃO DE PAGAMENTO COM OS 3 CARDS */}
             <div className="space-y-3 pt-3 border-t border-[#ECE8F0]">
               <h3 className="text-xs font-semibold text-[#28242A] uppercase tracking-wider">
                 Forma de Pagamento
               </h3>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                
+                {/* CARD 1: PIX */}
                 <button
                   type="button"
                   onClick={() => setPaymentMethod('pix')}
-                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1.5 text-xs font-medium transition-all cursor-pointer ${
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
                     paymentMethod === 'pix'
-                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A]'
-                      : 'border-[#ECE8F0] bg-white text-[#726C74]'
+                      ? 'border-[#69318A] bg-[#F3EDF6] ring-1 ring-[#69318A]'
+                      : 'border-[#ECE8F0] bg-white hover:border-[#D8CFE3]'
                   }`}
                 >
-                  <QrCode className="w-4 h-4 stroke-[1.8]" />
-                  <span>Pix</span>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className={`p-1.5 rounded-lg ${paymentMethod === 'pix' ? 'bg-[#69318A] text-white' : 'bg-[#FCFAF7] text-[#69318A]'}`}>
+                      <QrCode className="w-4 h-4 stroke-[1.8]" />
+                    </div>
+                    <span className="text-xs font-bold text-[#28242A] font-['DM_Sans']">PIX</span>
+                  </div>
+                  <p className="text-[11px] text-[#726C74] leading-tight">
+                    Pagamento rápido e seguro.
+                  </p>
                 </button>
 
+                {/* CARD 2: CARTÃO */}
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod('card_delivery')}
-                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1.5 text-xs font-medium transition-all cursor-pointer ${
-                    paymentMethod === 'card_delivery'
-                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A]'
-                      : 'border-[#ECE8F0] bg-white text-[#726C74]'
+                  onClick={() => setPaymentMethod('card_online')}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    paymentMethod === 'card_online'
+                      ? 'border-[#69318A] bg-[#F3EDF6] ring-1 ring-[#69318A]'
+                      : 'border-[#ECE8F0] bg-white hover:border-[#D8CFE3]'
                   }`}
                 >
-                  <CreditCard className="w-4 h-4 stroke-[1.8]" />
-                  <span>Cartão</span>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className={`p-1.5 rounded-lg ${paymentMethod === 'card_online' ? 'bg-[#69318A] text-white' : 'bg-[#FCFAF7] text-[#69318A]'}`}>
+                      <CreditCard className="w-4 h-4 stroke-[1.8]" />
+                    </div>
+                    <span className="text-xs font-bold text-[#28242A] font-['DM_Sans']">CARTÃO</span>
+                  </div>
+                  <p className="text-[11px] text-[#726C74] leading-tight">
+                    Pague online pelo ambiente seguro.
+                  </p>
                 </button>
 
+                {/* CARD 3: NA ENTREGA */}
                 <button
                   type="button"
-                  onClick={() => setPaymentMethod('cash')}
-                  className={`p-2.5 rounded-xl border flex flex-col items-center gap-1.5 text-xs font-medium transition-all cursor-pointer ${
-                    paymentMethod === 'cash'
-                      ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A]'
-                      : 'border-[#ECE8F0] bg-white text-[#726C74]'
+                  onClick={() => setPaymentMethod('delivery')}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                    paymentMethod === 'delivery'
+                      ? 'border-[#69318A] bg-[#F3EDF6] ring-1 ring-[#69318A]'
+                      : 'border-[#ECE8F0] bg-white hover:border-[#D8CFE3]'
                   }`}
                 >
-                  <Banknote className="w-4 h-4 stroke-[1.8]" />
-                  <span>Dinheiro</span>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className={`p-1.5 rounded-lg ${paymentMethod === 'delivery' ? 'bg-[#69318A] text-white' : 'bg-[#FCFAF7] text-[#69318A]'}`}>
+                      <Banknote className="w-4 h-4 stroke-[1.8]" />
+                    </div>
+                    <span className="text-xs font-bold text-[#28242A] font-['DM_Sans']">NA ENTREGA</span>
+                  </div>
+                  <p className="text-[11px] text-[#726C74] leading-tight">
+                    Pague em dinheiro ou cartão ao receber.
+                  </p>
                 </button>
+
               </div>
 
-              {/* Detalhes do Pagamento */}
-              {paymentMethod === 'pix' && (
-                <div className="p-3 bg-[#FCFAF7] rounded-xl border border-[#ECE8F0] text-xs text-[#726C74]">
-                  <p>O pagamento será combinado após o envio do pedido.</p>
-                </div>
-              )}
-
-              {paymentMethod === 'card_delivery' && (
-                <div className="p-3 bg-[#FCFAF7] rounded-xl border border-[#ECE8F0] space-y-2">
-                  <p className="text-xs text-[#726C74]">A maquininha será levada até você na entrega:</p>
+              {/* Opções extras quando selecionado NA ENTREGA */}
+              {paymentMethod === 'delivery' && (
+                <div className="p-3 bg-[#FCFAF7] rounded-xl border border-[#ECE8F0] space-y-3">
+                  <p className="text-xs font-medium text-[#28242A]">Escolha como vai pagar na entrega:</p>
+                  
                   <div className="flex gap-4">
                     <label className="flex items-center gap-1.5 text-xs text-[#28242A] cursor-pointer">
                       <input
                         type="radio"
-                        name="cardType"
-                        checked={cardType === 'credit'}
-                        onChange={() => setCardType('credit')}
+                        name="deliveryPaymentMethod"
+                        checked={deliveryPaymentMethod === 'card_delivery'}
+                        onChange={() => setDeliveryPaymentMethod('card_delivery')}
                       />
-                      <span>Crédito</span>
+                      <span>Cartão (levar maquininha)</span>
                     </label>
+
                     <label className="flex items-center gap-1.5 text-xs text-[#28242A] cursor-pointer">
                       <input
                         type="radio"
-                        name="cardType"
-                        checked={cardType === 'debit'}
-                        onChange={() => setCardType('debit')}
+                        name="deliveryPaymentMethod"
+                        checked={deliveryPaymentMethod === 'cash'}
+                        onChange={() => setDeliveryPaymentMethod('cash')}
                       />
-                      <span>Débito</span>
+                      <span>Dinheiro</span>
                     </label>
                   </div>
-                </div>
-              )}
 
-              {paymentMethod === 'cash' && (
-                <div className="p-3 bg-[#FCFAF7] rounded-xl border border-[#ECE8F0] space-y-2">
-                  <label className="flex items-center gap-2 text-xs text-[#28242A] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={needsChange}
-                      onChange={(e) => setNeedsChange(e.target.checked)}
-                      className="rounded"
-                    />
-                    <span>Precisa de troco?</span>
-                  </label>
+                  {deliveryPaymentMethod === 'card_delivery' && (
+                    <div className="flex gap-4 pt-1 border-t border-[#ECE8F0]">
+                      <label className="flex items-center gap-1.5 text-xs text-[#726C74] cursor-pointer">
+                        <input
+                          type="radio"
+                          name="cardType"
+                          checked={cardType === 'credit'}
+                          onChange={() => setCardType('credit')}
+                        />
+                        <span>Crédito</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 text-xs text-[#726C74] cursor-pointer">
+                        <input
+                          type="radio"
+                          name="cardType"
+                          checked={cardType === 'debit'}
+                          onChange={() => setCardType('debit')}
+                        />
+                        <span>Débito</span>
+                      </label>
+                    </div>
+                  )}
 
-                  {needsChange && (
-                    <div>
-                      <input
-                        type="text"
-                        placeholder={`Ex: 50,00 (Total: ${formatCurrency(total)})`}
-                        value={changeForAmount}
-                        onChange={(e) => setChangeForAmount(e.target.value)}
-                        className="w-full p-2 bg-white border border-[#ECE8F0] rounded-lg text-xs outline-none"
-                      />
-                      {formErrors.changeFor && (
-                        <p className="text-[11px] text-red-500 mt-1">{formErrors.changeFor}</p>
+                  {deliveryPaymentMethod === 'cash' && (
+                    <div className="pt-1 border-t border-[#ECE8F0] space-y-2">
+                      <label className="flex items-center gap-2 text-xs text-[#28242A] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={needsChange}
+                          onChange={(e) => setNeedsChange(e.target.checked)}
+                        />
+                        <span>Precisa de troco?</span>
+                      </label>
+
+                      {needsChange && (
+                        <div>
+                          <input
+                            type="text"
+                            placeholder={`Ex: 50,00 (Total: ${formatCurrency(total)})`}
+                            value={changeForAmount}
+                            onChange={(e) => setChangeForAmount(e.target.value)}
+                            className="w-full p-2 bg-white border border-[#ECE8F0] rounded-lg text-xs outline-none"
+                          />
+                          {formErrors.changeFor && (
+                            <p className="text-[11px] text-red-500 mt-1">{formErrors.changeFor}</p>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
@@ -509,24 +638,39 @@ export const CheckoutModal: React.FC = () => {
               </div>
             </div>
 
-            <p className="text-[11px] text-[#726C74] text-center">
-              Ao clicar abaixo, seu pedido será enviado para o WhatsApp da loja para confirmação.
-            </p>
-
           </div>
         )}
 
-        {/* Botão de Finalização */}
+        {/* Botão de Finalização com Texto Dinâmico */}
         {!completedOrder && (
           <div className="p-4 sm:p-5 bg-white border-t border-[#ECE8F0] shrink-0">
             <button
               type="button"
               disabled={isSubmitting}
               onClick={handleFinishOrder}
-              className="w-full h-11 px-5 bg-[#69318A] hover:bg-[#572185] disabled:opacity-50 text-white font-medium text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              className="w-full h-11 px-5 bg-[#69318A] hover:bg-[#572185] disabled:opacity-50 text-white font-semibold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
             >
-              <Send className="w-4 h-4 stroke-[1.8]" />
-              <span>Enviar pedido pelo WhatsApp</span>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Processando...</span>
+                </>
+              ) : paymentMethod === 'pix' ? (
+                <>
+                  <QrCode className="w-4 h-4" />
+                  <span>Pagar com Pix ({formatCurrency(total)})</span>
+                </>
+              ) : paymentMethod === 'card_online' ? (
+                <>
+                  <CreditCard className="w-4 h-4" />
+                  <span>Pagar com cartão ({formatCurrency(total)})</span>
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4" />
+                  <span>Finalizar pelo WhatsApp</span>
+                </>
+              )}
             </button>
           </div>
         )}

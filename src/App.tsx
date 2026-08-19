@@ -13,6 +13,7 @@ import { ProductModal } from './components/ProductModal';
 import { CartDrawer } from './components/CartDrawer';
 import { FloatingCartBar } from './components/FloatingCartBar';
 import { CheckoutModal } from './components/CheckoutModal';
+import { PaymentResultModal } from './components/PaymentResultModal';
 import { ContactSection } from './components/ContactSection';
 import { Footer } from './components/Footer';
 import { ToastNotification } from './components/ToastNotification';
@@ -111,7 +112,7 @@ const MainContent: React.FC = () => {
               Nosso cardápio
             </h2>
             <p className="text-sm text-[#726C74] mt-1.5">
-              Escolha seu açaí, personalize os adicionais e finalize pelo WhatsApp.
+              Escolha seu açaí, personalize os adicionais e finalize pelo WhatsApp ou online.
             </p>
           </div>
 
@@ -123,7 +124,7 @@ const MainContent: React.FC = () => {
               </div>
               <button
                 onClick={loadCatalog}
-                className="p-1 hover:bg-amber-100 rounded-lg text-amber-800 transition-colors"
+                className="p-1 hover:bg-amber-100 rounded-lg text-amber-800 transition-colors cursor-pointer"
                 title="Tentar novamente"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
@@ -188,6 +189,7 @@ const MainContent: React.FC = () => {
       <CartDrawer />
       <FloatingCartBar />
       <CheckoutModal />
+      <PaymentResultModal />
       <ToastNotification />
 
     </div>

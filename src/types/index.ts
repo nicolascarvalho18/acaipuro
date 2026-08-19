@@ -84,9 +84,19 @@ export interface CartItem {
 
 export type DeliveryType = 'delivery' | 'pickup';
 
-export type PaymentMethod = 'pix' | 'card_delivery' | 'cash';
+export type PaymentMethod = 'pix' | 'card_online' | 'delivery';
+
+export type DeliveryPaymentMethod = 'cash' | 'card_delivery';
 
 export type CardType = 'credit' | 'debit';
+
+export type OrderStatus = 
+  | 'awaiting_payment'
+  | 'approved'
+  | 'pending'
+  | 'rejected'
+  | 'delivery'
+  | 'confirmed';
 
 export interface CustomerAddress {
   street: string;
@@ -101,12 +111,12 @@ export interface CustomerAddress {
 export interface OrderDetails {
   orderId: string;
   customerName: string;
-  customerPhone: string;
+  customerPhone?: string;
   deliveryType: DeliveryType;
   address?: CustomerAddress;
   paymentMethod: PaymentMethod;
+  deliveryPaymentMethod?: DeliveryPaymentMethod;
   cardType?: CardType;
-  cardBrand?: string;
   changeFor?: number;
   generalNotes?: string;
   items: CartItem[];
@@ -114,6 +124,8 @@ export interface OrderDetails {
   deliveryFee: number;
   discount: number;
   total: number;
+  status?: OrderStatus;
+  paymentId?: string;
   createdAt: string;
 }
 
@@ -121,8 +133,8 @@ export interface StoreConfig {
   storeName: string;
   tagline: string;
   phone: string;
-  whatsappNumber: string; // e.g. "5511999999999" (only digits)
-  whatsappFormatted: string; // e.g. "(11) 99999-9999"
+  whatsappNumber: string; // e.g. "5513991509733" (only digits)
+  whatsappFormatted: string; // e.g. "(13) 99150-9733"
   instagram: string;
   address: {
     street: string;
