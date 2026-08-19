@@ -199,7 +199,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     description: 'Água mineral garrafa 500 ml gelada.',
     category: 'bebidas',
     price: 4.50,
-    image: 'https://images.unsplash.com/photo-1548839140-29a749e1bc4e?auto=format&fit=crop&w=800&q=80',
+    image: 'https://images.unsplash.com/photo-1560023907-5f339617ea30?auto=format&fit=crop&w=800&q=80',
     isAvailable: true,
     allowsCustomization: false,
     displayOrder: 11,
