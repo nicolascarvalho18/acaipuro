@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useCart } from '../contexts/CartContext';
 import { STORE_CONFIG } from '../config/storeConfig';
+import { supabase, isSupabaseConfigured } from '../services/supabaseClient';
 import { 
   formatCurrency, 
-  generateOrderId, 
   formatPhoneNumber 
 } from '../utils/formatters';
 import { 
@@ -16,8 +16,7 @@ import {
   Loader2, 
   CreditCard, 
   QrCode, 
-  Banknote,
-  ShoppingBag
+  Banknote
 } from 'lucide-react';
 import type { FulfillmentType, PaymentMethod, DeliveryPaymentMethod, CardType } from '../types';
 
@@ -42,7 +41,6 @@ export const CheckoutModal: React.FC = () => {
   const [number, setNumber] = useState('');
   const [neighborhood, setNeighborhood] = useState('');
   const [complement, setComplement] = useState('');
-  const [reference, setReference] = useState('');
 
   // Forma de Pagamento
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
@@ -122,31 +120,76 @@ export const CheckoutModal: React.FC = () => {
       total,
     };
 
+    let orderSavedSuccessfully = false;
+    let finalOrderNumber = orderNumber;
+
+    // 1. Tentar salvar via API do backend
     try {
-      // 1. INSERE O PEDIDO NO BANCO DE DADOS
       const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(orderPayload),
       });
 
-      const data = await res.json();
-
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Não foi possível enviar seu pedido. Tente novamente.');
+      const rawText = await res.text();
+      let data: any = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        console.warn('API returned non-JSON response:', rawText);
       }
 
-      // 2. SE SUCESSO: LIMPA O CARRINHO E MOSTRA A CONFIRMAÇÃO REAL
-      const confirmedNumber = data.orderNumber || orderNumber;
-      setCompletedOrder({ ...orderPayload, orderId: confirmedNumber });
-      clearCart();
-
-    } catch (err: any) {
-      console.error('Order creation error:', err);
-      setErrorMessage(err?.message || 'Não foi possível enviar seu pedido. Tente novamente.');
-    } finally {
-      setIsSubmitting(false);
+      if (res.ok && data && data.success) {
+        orderSavedSuccessfully = true;
+        finalOrderNumber = data.orderNumber || orderNumber;
+      }
+    } catch (apiErr) {
+      console.warn('API /orders error:', apiErr);
     }
+
+    // 2. Se a API falhou e Supabase estiver configurado no frontend, salvar direto no Supabase
+    if (!orderSavedSuccessfully && isSupabaseConfigured() && supabase) {
+      try {
+        const { data: supaData, error: supaErr } = await supabase
+          .from('orders')
+          .insert({
+            order_number: orderNumber,
+            customer_name: orderPayload.customerName,
+            customer_phone: orderPayload.customerPhone,
+            fulfillment_type: orderPayload.fulfillmentType,
+            street: orderPayload.street,
+            number: orderPayload.number,
+            neighborhood: orderPayload.neighborhood,
+            complement: orderPayload.complement,
+            items: orderPayload.items,
+            subtotal: orderPayload.subtotal,
+            delivery_fee: orderPayload.deliveryFee,
+            total: orderPayload.total,
+            payment_method: orderPayload.paymentMethod,
+            status: 'new',
+            notes: orderPayload.notes,
+          })
+          .select()
+          .single();
+
+        if (!supaErr && supaData) {
+          orderSavedSuccessfully = true;
+          finalOrderNumber = supaData.order_number || orderNumber;
+        }
+      } catch (supaEx) {
+        console.warn('Direct Supabase insert error:', supaEx);
+      }
+    }
+
+    // 3. Resultado do processamento
+    if (orderSavedSuccessfully) {
+      setCompletedOrder({ ...orderPayload, orderId: finalOrderNumber });
+      clearCart();
+    } else {
+      setErrorMessage('Não foi possível enviar seu pedido no momento. Verifique sua conexão e tente novamente.');
+    }
+
+    setIsSubmitting(false);
   };
 
   const handleCloseAll = () => {

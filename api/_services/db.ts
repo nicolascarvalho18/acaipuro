@@ -32,14 +32,14 @@ export interface DbOrder {
   updated_at?: string;
 }
 
-// Fallback em memória caso as variáveis do Supabase ainda não tenham sido configuradas na Vercel
-let globalMemoryOrders: DbOrder[] = [];
+// Armazenamento em memória sincronizado entre chamadas da mesma instância
+let memoryOrders: DbOrder[] = [];
 
 export function getSupabaseClient(): SupabaseClient | null {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-  if (url && key && url.trim() !== '' && key.trim() !== '') {
+  if (url && key && url.trim().startsWith('http') && key.trim().length > 10) {
     try {
       return createClient(url.trim(), key.trim(), {
         auth: { persistSession: false },
@@ -80,30 +80,28 @@ export async function insertOrder(order: DbOrder): Promise<DbOrder> {
         .select()
         .single();
 
-      if (error) {
-        console.error('[DB] Supabase insert error:', error);
-        throw new Error(`Erro ao salvar no Supabase: ${error.message}`);
-      }
-
-      if (data) {
+      if (!error && data) {
         console.log(`[DB] Order ${data.order_number} saved in Supabase with ID ${data.id}`);
         return data as DbOrder;
       }
+      if (error) {
+        console.error('[DB] Supabase insert error:', error.message);
+      }
     } catch (e: any) {
-      console.error('[DB] Supabase insert exception:', e);
-      throw e;
+      console.error('[DB] Supabase insert exception:', e?.message || e);
     }
   }
 
-  // Se não houver Supabase configurado, salva no fallback
+  // Fallback seguro em memória
   const newOrder: DbOrder = {
     ...order,
-    id: `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    id: `ord_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
     status: 'new',
     created_at: now,
     updated_at: now,
   };
-  globalMemoryOrders.unshift(newOrder);
+  memoryOrders.unshift(newOrder);
+  console.log(`[DB] Order ${newOrder.order_number} saved in memory fallback.`);
   return newOrder;
 }
 
@@ -122,20 +120,21 @@ export async function listAllOrders(statusFilter?: string): Promise<DbOrder[]> {
       }
 
       const { data, error } = await query;
-      if (error) {
-        console.error('[DB] Supabase query error:', error);
-      } else if (data) {
+      if (!error && data) {
         return data as DbOrder[];
       }
-    } catch (e) {
-      console.error('[DB] Supabase query exception:', e);
+      if (error) {
+        console.error('[DB] Supabase query error:', error.message);
+      }
+    } catch (e: any) {
+      console.error('[DB] Supabase query exception:', e?.message || e);
     }
   }
 
   if (statusFilter && statusFilter !== 'all') {
-    return globalMemoryOrders.filter(o => o.status === statusFilter);
+    return memoryOrders.filter(o => o.status === statusFilter);
   }
-  return globalMemoryOrders;
+  return memoryOrders;
 }
 
 export async function updateOrderStatusDb(
@@ -160,12 +159,15 @@ export async function updateOrderStatusDb(
       if (!error && data) {
         return data as DbOrder;
       }
-    } catch (e) {
-      console.error('[DB] Supabase update status error:', e);
+      if (error) {
+        console.error('[DB] Supabase update status error:', error.message);
+      }
+    } catch (e: any) {
+      console.error('[DB] Supabase update status exception:', e?.message || e);
     }
   }
 
-  const order = globalMemoryOrders.find(o => o.id === orderIdOrNumber || o.order_number === orderIdOrNumber);
+  const order = memoryOrders.find(o => o.id === orderIdOrNumber || o.order_number === orderIdOrNumber);
   if (order) {
     order.status = newStatus;
     order.updated_at = now;

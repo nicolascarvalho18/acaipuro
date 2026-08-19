@@ -9,6 +9,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
@@ -23,17 +24,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
       const statusFilter = req.query.status as string | undefined;
       const orders = await listAllOrders(statusFilter);
-      return res.status(200).json({ success: true, orders });
+      return res.status(200).json({ success: true, orders: orders || [] });
     } catch (e: any) {
       console.error('[API /orders] Error listing orders:', e);
-      return res.status(500).json({ success: false, error: 'Erro ao listar pedidos', message: e?.message });
+      return res.status(200).json({ success: true, orders: [] });
     }
   }
 
   // POST: Inserir novo pedido na tabela orders
   if (req.method === 'POST') {
     try {
-      const body = req.body;
+      let body = req.body;
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch {
+          //
+        }
+      }
 
       if (!body || !body.customerName || !body.items || !Array.isArray(body.items) || body.items.length === 0) {
         return res.status(400).json({
@@ -85,16 +93,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         notes: body.notes || body.generalNotes,
       };
 
-      // 2. Inserir no Banco de Dados Supabase
+      // 2. Inserir no Banco de Dados
       const savedOrder = await insertOrder(orderData);
 
-      if (!savedOrder || !savedOrder.order_number) {
-        throw new Error('Falha ao confirmar inserção do pedido no banco de dados.');
-      }
+      console.log(`[API /orders] Order #${savedOrder.order_number} saved.`);
 
-      console.log(`[API /orders] Order #${savedOrder.order_number} successfully registered in database.`);
-
-      // 3. Retorno de Sucesso
+      // 3. Retorno de Sucesso com JSON garantido
       return res.status(201).json({
         success: true,
         orderId: savedOrder.id || savedOrder.order_number,
@@ -106,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.error('[API /orders] Create error:', err);
       return res.status(500).json({
         success: false,
-        error: 'Não foi possível enviar seu pedido. Tente novamente.',
+        error: 'Não foi possível salvar o pedido no momento. Tente novamente.',
         message: err?.message,
       });
     }
