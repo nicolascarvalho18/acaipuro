@@ -11,7 +11,7 @@ export const Logo: React.FC<LogoProps> = ({ variant = 'dark', className = '' }) 
       <img
         src="/logo.png"
         alt="Açaí Puro Sabor"
-        className={className || "w-10 h-10 object-contain"}
+        className={className || "w-9 h-9 object-contain"}
       />
     );
   }
@@ -22,7 +22,7 @@ export const Logo: React.FC<LogoProps> = ({ variant = 'dark', className = '' }) 
         <img
           src="/logo-light.png"
           alt="Açaí Puro Sabor • Açaí Artesanal"
-          className="w-[150px] sm:w-[190px] md:w-[210px] h-auto object-contain"
+          className="h-10 sm:h-12 w-auto object-contain"
           loading="lazy"
         />
       </div>
@@ -34,7 +34,7 @@ export const Logo: React.FC<LogoProps> = ({ variant = 'dark', className = '' }) 
       <img
         src="/logo.png"
         alt="Açaí Puro Sabor • Açaí Artesanal"
-        className="w-[145px] sm:w-[185px] md:w-[210px] h-auto object-contain"
+        className="h-11 sm:h-13 w-auto object-contain"
         loading="eager"
       />
     </div>
