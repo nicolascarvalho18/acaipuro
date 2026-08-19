@@ -13,7 +13,6 @@ import { ProductModal } from './components/ProductModal';
 import { CartDrawer } from './components/CartDrawer';
 import { FloatingCartBar } from './components/FloatingCartBar';
 import { CheckoutModal } from './components/CheckoutModal';
-import { Testimonials } from './components/Testimonials';
 import { ContactSection } from './components/ContactSection';
 import { Footer } from './components/Footer';
 import { ToastNotification } from './components/ToastNotification';
@@ -142,7 +141,7 @@ const MainContent: React.FC = () => {
 
           {isLoading ? (
             <div className="py-20 flex flex-col items-center justify-center space-y-3">
-              <div className="w-8 h-8 border-3 border-[#F4EFF8] border-t-[#542381] rounded-full animate-spin"></div>
+              <div className="w-8 h-8 border-3 border-[#EEE8F4] border-t-[#572185] rounded-full animate-spin"></div>
               <p className="text-xs text-[#716B76]">Carregando cardápio...</p>
             </div>
           ) : filteredProducts.length === 0 ? (
@@ -156,7 +155,7 @@ const MainContent: React.FC = () => {
                   setSearchQuery('');
                   setSelectedCategory('all');
                 }}
-                className="px-4 py-2 bg-[#542381] text-white text-xs font-medium rounded-xl hover:bg-[#431868] transition-all cursor-pointer"
+                className="px-4 py-2 bg-[#572185] text-white text-xs font-medium rounded-xl hover:bg-[#431868] transition-all cursor-pointer"
               >
                 Limpar busca
               </button>
@@ -171,9 +170,6 @@ const MainContent: React.FC = () => {
 
         </div>
       </section>
-
-      {/* Avaliações */}
-      <Testimonials />
 
       {/* Localização e Atendimento */}
       <ContactSection />

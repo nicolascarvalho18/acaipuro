@@ -2,7 +2,7 @@ import type { StoreConfig } from '../types';
 
 export const STORE_CONFIG: StoreConfig = {
   storeName: "Açaí Puro Sabor",
-  tagline: "Açaí artesanal preparado na hora com acompanhamentos selecionados.",
+  tagline: "Açaí preparado na hora, com os acompanhamentos que você escolher.",
   phone: "(13) 99150-9733",
   whatsappNumber: "5513991509733", // WhatsApp oficial da loja
   whatsappFormatted: "(13) 99150-9733",
@@ -14,13 +14,13 @@ export const STORE_CONFIG: StoreConfig = {
     city: "Baixada Santista",
     state: "SP",
     zipCode: "",
-    fullAddress: "Consulte a disponibilidade de entrega para o seu endereço"
+    fullAddress: "Atendimento Delivery na Baixada Santista e Retirada"
   },
   mapsUrl: "https://maps.google.com",
   openingHours: {
-    weekdays: "Segunda a Sexta: 13h às 23h",
-    weekend: "Sábados, Domingos e Feriados: 13h às 23h",
-    hoursSummary: "Todos os dias • 13h às 23h",
+    weekdays: "Todos os dias das 13h às 23h",
+    weekend: "Todos os dias das 13h às 23h",
+    hoursSummary: "Todos os dias das 13h às 23h",
     startHour: 13,
     endHour: 23
   },
@@ -48,7 +48,7 @@ export const STORE_CONFIG: StoreConfig = {
   googleSheetCsvUrl: "",
   announcementBanner: {
     enabled: true,
-    text: "Entrega em 30 a 45 minutos • Consulte a disponibilidade para sua região",
+    text: "Entrega em 30 a 45 minutos • Atendimento todos os dias das 13h às 23h",
     badgeText: ""
   }
 };

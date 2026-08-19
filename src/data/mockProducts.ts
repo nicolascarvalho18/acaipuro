@@ -82,7 +82,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     description: 'Açaí cremoso com morango, leite em pó e leite condensado.',
     category: 'acai',
     price: 21.90,
-    image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&w=800&q=80',
+    image: 'https://images.unsplash.com/photo-1590301157890-4810ed352733?auto=format&fit=crop&w=800&q=80',
     isAvailable: true,
     isFeatured: true,
     sizes: DEFAULT_SIZES,
@@ -214,32 +214,5 @@ export const INITIAL_PRODUCTS: Product[] = [
     isAvailable: true,
     allowsCustomization: false,
     displayOrder: 12,
-  }
-];
-
-export const TESTIMONIALS = [
-  {
-    id: 1,
-    name: "Camila Rodrigues",
-    role: "Cliente",
-    rating: 5,
-    comment: "O açaí chegou no ponto perfeito e as frutas estavam muito frescas. Recomendo.",
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&q=80"
-  },
-  {
-    id: 2,
-    name: "Lucas Mendes",
-    role: "Cliente",
-    rating: 5,
-    comment: "Muito prático pedir pelo WhatsApp. Entrega rápida e produto muito bem embalado.",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80"
-  },
-  {
-    id: 3,
-    name: "Beatriz Silveira",
-    role: "Cliente",
-    rating: 5,
-    comment: "Excelente qualidade. A consistência do açaí é muito cremosa e saborosa.",
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80"
   }
 ];
