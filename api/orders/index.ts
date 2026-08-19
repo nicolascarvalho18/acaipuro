@@ -1,6 +1,48 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Armazenamento em memória caso o Supabase não esteja configurado
+// Catálogo de preços oficiais para validação e recálculo no servidor
+const OFFICIAL_CATALOG: Record<string, { basePrice: number; promoPrice?: number; sizes?: Record<string, number>; maxFree?: number }> = {
+  'prod_acai_tradicional': {
+    basePrice: 16.90,
+    sizes: { '300 ml': 16.90, '500 ml': 21.90, '700 ml': 27.90, '1 litro': 38.90, '1 Litro': 38.90 },
+    maxFree: 3,
+  },
+  'prod_acai_morango_leite_po': {
+    basePrice: 21.90,
+    sizes: { '300 ml': 21.90, '500 ml': 26.90, '700 ml': 32.90, '1 litro': 43.90, '1 Litro': 43.90 },
+    maxFree: 3,
+  },
+  'prod_acai_banana_granola': {
+    basePrice: 19.90,
+    sizes: { '300 ml': 19.90, '500 ml': 24.90, '700 ml': 30.90, '1 litro': 41.90, '1 Litro': 41.90 },
+    maxFree: 3,
+  },
+  'prod_acai_creme_avela': {
+    basePrice: 26.90,
+    sizes: { '300 ml': 26.90, '500 ml': 31.90, '700 ml': 37.90, '1 litro': 48.90, '1 Litro': 48.90 },
+    maxFree: 2,
+  },
+  'combo_para_dois': {
+    basePrice: 44.90,
+    promoPrice: 39.90,
+    maxFree: 3,
+  },
+  'combo_familia': {
+    basePrice: 68.90,
+    maxFree: 3,
+  },
+  'prod_barca_acai': {
+    basePrice: 49.90,
+    sizes: { 'Barca Individual': 36.90, '800 ml': 36.90, 'Barca Tradicional': 49.90, '1.2 Litros': 49.90 },
+    maxFree: 4,
+  },
+  'prod_brownie_artesanal': { basePrice: 12.90 },
+  'prod_mousse_maracuja': { basePrice: 9.90 },
+  'prod_suco_acai': { basePrice: 14.90 },
+  'prod_agua_mineral': { basePrice: 4.50 },
+  'prod_refrigerante_lata': { basePrice: 6.50 },
+};
+
 let memoryOrders: any[] = [];
 
 function getSupabaseClient() {
@@ -21,7 +63,6 @@ function getSupabaseClient() {
 }
 
 export default async function handler(req: any, res: any) {
-  // Configuração de CORS e Cabeçalhos JSON
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST,PATCH');
@@ -71,7 +112,7 @@ export default async function handler(req: any, res: any) {
     }
   }
 
-  // POST: Criar Pedido
+  // POST: Criar e Recalcular Pedido Oficial no Servidor
   if (req.method === 'POST') {
     try {
       let body = req.body;
@@ -88,6 +129,60 @@ export default async function handler(req: any, res: any) {
         });
       }
 
+      // 1. Recalcular e validar cada produto
+      let calculatedSubtotal = 0;
+      const parsedItems = body.items.map((item: any) => {
+        const qty = Math.max(1, Number(item.quantity) || 1);
+        const prodId = item.productId || item.id || '';
+        const prodName = String(item.name || 'Produto');
+        const sizeStr = item.size ? String(item.size).trim() : undefined;
+
+        let officialUnitPrice = Number(item.unitPrice) || 0;
+
+        // Validar no catálogo oficial se disponível
+        const catalogItem = OFFICIAL_CATALOG[prodId] || Object.entries(OFFICIAL_CATALOG).find(([k, v]) => prodName.toLowerCase().includes(k.replace('prod_', '').replace('combo_', '').replace(/_/g, ' ')))?.[1];
+
+        if (catalogItem) {
+          if (sizeStr && catalogItem.sizes && catalogItem.sizes[sizeStr]) {
+            officialUnitPrice = catalogItem.sizes[sizeStr];
+          } else {
+            officialUnitPrice = catalogItem.promoPrice || catalogItem.basePrice;
+          }
+        }
+
+        // Se o cliente enviou adicionais extras pagos
+        if (Array.isArray(item.additionals) && item.additionals.length > 0) {
+          // Mantém valor unitário calculado se maior
+          if (Number(item.unitPrice) > officialUnitPrice) {
+            officialUnitPrice = Number(item.unitPrice);
+          }
+        }
+
+        const itemTotal = Number((officialUnitPrice * qty).toFixed(2));
+        calculatedSubtotal += itemTotal;
+
+        return {
+          productId: prodId,
+          name: prodName,
+          quantity: qty,
+          unitPrice: officialUnitPrice,
+          totalPrice: itemTotal,
+          size: sizeStr,
+          base: item.base,
+          additionals: item.additionals || [],
+          notes: item.notes,
+        };
+      });
+
+      const fulfillmentType = (body.fulfillmentType === 'pickup' || body.deliveryType === 'pickup') ? 'pickup' : 'delivery';
+      
+      // Frete grátis a partir de R$ 45,00
+      let deliveryFee = 0;
+      if (fulfillmentType === 'delivery') {
+        deliveryFee = calculatedSubtotal >= 45.00 ? 0.00 : (Number(body.deliveryFee) || 5.00);
+      }
+
+      const total = Number((calculatedSubtotal + deliveryFee).toFixed(2));
       const orderNumber = body.orderNumber || `PED-${Math.floor(1000 + Math.random() * 9000)}`;
       const now = new Date().toISOString();
 
@@ -95,15 +190,15 @@ export default async function handler(req: any, res: any) {
         order_number: orderNumber,
         customer_name: String(body.customerName).trim(),
         customer_phone: body.customerPhone ? String(body.customerPhone).trim() : null,
-        fulfillment_type: (body.fulfillmentType === 'pickup' || body.deliveryType === 'pickup') ? 'pickup' : 'delivery',
+        fulfillment_type: fulfillmentType,
         street: body.street || body.address?.street || null,
         number: body.number || body.address?.number || null,
         neighborhood: body.neighborhood || body.address?.neighborhood || null,
         complement: body.complement || body.address?.complement || null,
-        items: body.items,
-        subtotal: Number(body.subtotal) || 0,
-        delivery_fee: Number(body.deliveryFee) || 0,
-        total: Number(body.total) || 0,
+        items: parsedItems,
+        subtotal: Number(calculatedSubtotal.toFixed(2)),
+        delivery_fee: Number(deliveryFee.toFixed(2)),
+        total,
         payment_method: body.paymentMethod || 'delivery',
         status: 'new',
         notes: body.notes || body.generalNotes || null,
@@ -137,11 +232,12 @@ export default async function handler(req: any, res: any) {
             .single();
 
           if (!error && data) {
-            console.log(`[Supabase] Order #${data.order_number} saved.`);
+            console.log(`[Supabase] Order #${data.order_number} saved (Total: R$ ${data.total}).`);
             return res.status(201).json({
               success: true,
               orderId: data.id || data.order_number,
               orderNumber: data.order_number,
+              total: data.total,
               status: 'new',
             });
           }
@@ -153,7 +249,7 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      // Fallback em memória se Supabase não estiver configurado
+      // Fallback em memória
       const memoryOrder = {
         ...orderData,
         id: `ord_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
@@ -164,6 +260,7 @@ export default async function handler(req: any, res: any) {
         success: true,
         orderId: memoryOrder.id,
         orderNumber: memoryOrder.order_number,
+        total: memoryOrder.total,
         status: 'new',
       });
 
