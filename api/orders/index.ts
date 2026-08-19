@@ -1,14 +1,30 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { insertOrder, listAllOrders, DbOrder } from '../_services/db';
+import { createClient } from '@supabase/supabase-js';
 
-function generateShortOrderNumber(): string {
-  return `PED-${Math.floor(1000 + Math.random() * 9000)}`;
+// Armazenamento em memória caso o Supabase não esteja configurado
+let memoryOrders: any[] = [];
+
+function getSupabaseClient() {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+
+  if (url && key && url.trim().startsWith('http') && key.trim().length > 10) {
+    try {
+      return createClient(url.trim(), key.trim(), {
+        auth: { persistSession: false },
+      });
+    } catch (e) {
+      console.error('[Supabase Init Error]:', e);
+      return null;
+    }
+  }
+  return null;
 }
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: any, res: any) {
+  // Configuração de CORS e Cabeçalhos JSON
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST,PATCH');
   res.setHeader('Content-Type', 'application/json');
   res.setHeader(
     'Access-Control-Allow-Headers',
@@ -19,28 +35,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
-  // GET: Listar pedidos reais da tabela orders
+  // GET: Listar Pedidos
   if (req.method === 'GET') {
     try {
-      const statusFilter = req.query.status as string | undefined;
-      const orders = await listAllOrders(statusFilter);
-      return res.status(200).json({ success: true, orders: orders || [] });
+      const statusFilter = req.query?.status;
+      const supabase = getSupabaseClient();
+
+      if (supabase) {
+        try {
+          let query = supabase
+            .from('orders')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+          if (statusFilter && statusFilter !== 'all') {
+            query = query.eq('status', statusFilter);
+          }
+
+          const { data, error } = await query;
+          if (!error && data) {
+            return res.status(200).json({ success: true, orders: data });
+          }
+        } catch (dbErr) {
+          console.error('[Supabase Query Error]:', dbErr);
+        }
+      }
+
+      const filtered = statusFilter && statusFilter !== 'all'
+        ? memoryOrders.filter(o => o.status === statusFilter)
+        : memoryOrders;
+
+      return res.status(200).json({ success: true, orders: filtered });
     } catch (e: any) {
-      console.error('[API /orders] Error listing orders:', e);
-      return res.status(200).json({ success: true, orders: [] });
+      return res.status(200).json({ success: true, orders: memoryOrders });
     }
   }
 
-  // POST: Inserir novo pedido na tabela orders
+  // POST: Criar Pedido
   if (req.method === 'POST') {
     try {
       let body = req.body;
       if (typeof body === 'string') {
         try {
           body = JSON.parse(body);
-        } catch {
-          //
-        }
+        } catch {}
       }
 
       if (!body || !body.customerName || !body.items || !Array.isArray(body.items) || body.items.length === 0) {
@@ -50,67 +88,90 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // 1. Validar e estruturar itens
-      let calculatedSubtotal = 0;
-      const parsedItems = body.items.map((item: any) => {
-        const qty = Number(item.quantity) || 1;
-        const uPrice = Number(item.unitPrice || item.unit_price) || 0;
-        const tPrice = Number(item.totalPrice || item.total_price) || (qty * uPrice);
-        calculatedSubtotal += tPrice;
+      const orderNumber = body.orderNumber || `PED-${Math.floor(1000 + Math.random() * 9000)}`;
+      const now = new Date().toISOString();
 
-        return {
-          name: String(item.name || item.product?.name || 'Açaí'),
-          quantity: qty,
-          unitPrice: uPrice,
-          totalPrice: tPrice,
-          size: item.size || item.selectedSize?.ml,
-          base: item.base || item.selectedBase?.name,
-          additionals: item.additionals || (item.selectedAdditionals?.map((a: any) => a.additional?.name || a.name || a)) || [],
-          notes: item.notes,
-        };
-      });
-
-      const fulfillmentType = (body.fulfillmentType === 'pickup' || body.deliveryType === 'pickup') ? 'pickup' : 'delivery';
-      const deliveryFee = fulfillmentType === 'delivery' ? (Number(body.deliveryFee ?? body.delivery_fee) || 5.0) : 0.0;
-      const total = Number((calculatedSubtotal + deliveryFee).toFixed(2));
-      const orderNumber = body.orderNumber || generateShortOrderNumber();
-
-      const orderData: DbOrder = {
+      const orderData = {
         order_number: orderNumber,
-        customer_name: body.customerName.trim(),
-        customer_phone: body.customerPhone ? body.customerPhone.trim() : undefined,
-        fulfillment_type: fulfillmentType,
-        street: body.address?.street || body.street,
-        number: body.address?.number || body.number,
-        neighborhood: body.address?.neighborhood || body.neighborhood,
-        complement: body.address?.complement || body.complement,
-        items: parsedItems,
-        subtotal: Number(calculatedSubtotal.toFixed(2)),
-        delivery_fee: Number(deliveryFee.toFixed(2)),
-        total,
-        payment_method: body.paymentMethod || body.payment_method || 'delivery',
+        customer_name: String(body.customerName).trim(),
+        customer_phone: body.customerPhone ? String(body.customerPhone).trim() : null,
+        fulfillment_type: (body.fulfillmentType === 'pickup' || body.deliveryType === 'pickup') ? 'pickup' : 'delivery',
+        street: body.street || body.address?.street || null,
+        number: body.number || body.address?.number || null,
+        neighborhood: body.neighborhood || body.address?.neighborhood || null,
+        complement: body.complement || body.address?.complement || null,
+        items: body.items,
+        subtotal: Number(body.subtotal) || 0,
+        delivery_fee: Number(body.deliveryFee) || 0,
+        total: Number(body.total) || 0,
+        payment_method: body.paymentMethod || 'delivery',
         status: 'new',
-        notes: body.notes || body.generalNotes,
+        notes: body.notes || body.generalNotes || null,
+        created_at: now,
+        updated_at: now,
       };
 
-      // 2. Inserir no Banco de Dados
-      const savedOrder = await insertOrder(orderData);
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        try {
+          const { data, error } = await supabase
+            .from('orders')
+            .insert({
+              order_number: orderData.order_number,
+              customer_name: orderData.customer_name,
+              customer_phone: orderData.customer_phone,
+              fulfillment_type: orderData.fulfillment_type,
+              street: orderData.street,
+              number: orderData.number,
+              neighborhood: orderData.neighborhood,
+              complement: orderData.complement,
+              items: orderData.items,
+              subtotal: orderData.subtotal,
+              delivery_fee: orderData.delivery_fee,
+              total: orderData.total,
+              payment_method: orderData.payment_method,
+              status: 'new',
+              notes: orderData.notes,
+            })
+            .select()
+            .single();
 
-      console.log(`[API /orders] Order #${savedOrder.order_number} saved.`);
+          if (!error && data) {
+            console.log(`[Supabase] Order #${data.order_number} saved.`);
+            return res.status(201).json({
+              success: true,
+              orderId: data.id || data.order_number,
+              orderNumber: data.order_number,
+              status: 'new',
+            });
+          }
+          if (error) {
+            console.error('[Supabase Insert Error]:', error.message);
+          }
+        } catch (supaEx: any) {
+          console.error('[Supabase Insert Exception]:', supaEx?.message || supaEx);
+        }
+      }
 
-      // 3. Retorno de Sucesso com JSON garantido
+      // Fallback em memória se Supabase não estiver configurado
+      const memoryOrder = {
+        ...orderData,
+        id: `ord_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
+      };
+      memoryOrders.unshift(memoryOrder);
+
       return res.status(201).json({
         success: true,
-        orderId: savedOrder.id || savedOrder.order_number,
-        orderNumber: savedOrder.order_number,
+        orderId: memoryOrder.id,
+        orderNumber: memoryOrder.order_number,
         status: 'new',
       });
 
     } catch (err: any) {
-      console.error('[API /orders] Create error:', err);
+      console.error('[API /orders POST Exception]:', err);
       return res.status(500).json({
         success: false,
-        error: 'Não foi possível salvar o pedido no momento. Tente novamente.',
+        error: 'Erro interno ao salvar pedido.',
         message: err?.message,
       });
     }

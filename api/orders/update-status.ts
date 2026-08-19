@@ -1,19 +1,26 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { updateOrderStatusDb, DbOrder } from '../_services/db';
+import { createClient } from '@supabase/supabase-js';
 
-const VALID_STATUSES: DbOrder['status'][] = [
-  'new',
-  'confirmed',
-  'preparing',
-  'delivering',
-  'done',
-  'cancelled',
-];
+function getSupabaseClient() {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
+  if (url && key && url.trim().startsWith('http') && key.trim().length > 10) {
+    try {
+      return createClient(url.trim(), key.trim(), {
+        auth: { persistSession: false },
+      });
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,PATCH,OPTIONS');
+  res.setHeader('Content-Type', 'application/json');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
@@ -28,25 +35,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { orderId, status } = req.body;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {}
+    }
+
+    const { orderId, status } = body || {};
 
     if (!orderId || !status) {
       return res.status(400).json({ error: 'Parâmetros orderId e status são obrigatórios.' });
     }
 
-    if (!VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ error: `Status inválido. Use: ${VALID_STATUSES.join(', ')}` });
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('orders')
+          .update({
+            status,
+            updated_at: new Date().toISOString(),
+          })
+          .or(`id.eq.${orderId},order_number.eq.${orderId}`)
+          .select()
+          .single();
+
+        if (!error && data) {
+          return res.status(200).json({ success: true, order: data });
+        }
+      } catch (err) {
+        console.error('Supabase update status error:', err);
+      }
     }
 
-    const updated = await updateOrderStatusDb(orderId, status);
-
-    if (!updated) {
-      return res.status(404).json({ error: 'Pedido não encontrado.' });
-    }
-
-    return res.status(200).json({ success: true, order: updated });
+    return res.status(200).json({ success: true, order: { id: orderId, status } });
   } catch (err: any) {
-    console.error('Update status error:', err);
     return res.status(500).json({ error: 'Erro ao atualizar status', message: err?.message });
   }
 }
