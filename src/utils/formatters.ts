@@ -1,13 +1,14 @@
 import type { OrderDetails, StoreConfig } from '../types';
 
 /**
- * Formata um valor numérico para Moeda Brasileira (R$ 0,00)
+ * Formata um valor numérico para Moeda Brasileira (R$ 0,00) de forma segura
  */
-export function formatCurrency(value: number): string {
+export function formatCurrency(value?: number | null | string): string {
+  const num = typeof value === 'number' && !isNaN(value) ? value : Number(value) || 0;
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
-  }).format(value);
+  }).format(num);
 }
 
 /**

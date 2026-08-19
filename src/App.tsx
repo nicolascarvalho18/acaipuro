@@ -32,9 +32,18 @@ const MainContent: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Roteamento Administrativo
-  const [isAdminRoute, setIsAdminRoute] = useState(false);
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  // Roteamento Administrativo síncrono para evitar tela branca
+  const [isAdminRoute, setIsAdminRoute] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    return path.includes('/admin') || search.includes('admin=true') || search.includes('admin=1');
+  });
+
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return !!sessionStorage.getItem('admin_auth_token');
+  });
 
   // Acompanhamento de Pedido do Cliente
   const [trackingOrderNumber, setTrackingOrderNumber] = useState<string | null>(null);
@@ -56,21 +65,21 @@ const MainContent: React.FC = () => {
   };
 
   useEffect(() => {
-    loadCatalog();
-
-    // Checar se a URL é /admin ou tem parâmetro ?admin=true
-    const path = window.location.pathname.toLowerCase();
-    const params = new URLSearchParams(window.location.search);
-    const hasAdminParam = params.get('admin') === 'true' || params.get('admin') === '1';
-
-    if (path.includes('/admin') || hasAdminParam) {
-      setIsAdminRoute(true);
-      const token = sessionStorage.getItem('admin_auth_token');
-      if (token) {
-        setIsAdminAuthenticated(true);
-      }
+    if (!isAdminRoute) {
+      loadCatalog();
     }
-  }, []);
+
+    const checkRoute = () => {
+      const path = window.location.pathname.toLowerCase();
+      const search = window.location.search.toLowerCase();
+      const isAdm = path.includes('/admin') || search.includes('admin=true') || search.includes('admin=1');
+      setIsAdminRoute(isAdm);
+      setIsAdminAuthenticated(!!sessionStorage.getItem('admin_auth_token'));
+    };
+
+    window.addEventListener('popstate', checkRoute);
+    return () => window.removeEventListener('popstate', checkRoute);
+  }, [isAdminRoute]);
 
   const handleOpenAdmin = () => {
     setIsAdminRoute(true);
