@@ -1,19 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { waitUntil } from '@vercel/functions';
-import { insertOrder, listOrders, DbOrder } from '../_services/db';
+import { insertOrderWithItems, listAllOrders, DbOrder } from '../_services/db';
 import { dispatchAllBackgroundNotifications } from '../_services/notifications';
 
-function generateOrderNumber(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  return `PED-${year}${month}${day}-${randomSuffix}`;
+function generateShortOrderNumber(): string {
+  return String(Math.floor(1000 + Math.random() * 9000));
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
@@ -26,28 +20,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
-  // GET: Listar pedidos para o Painel Administrativo do Lojista
+  // GET: Listar pedidos para o Painel do Lojista
   if (req.method === 'GET') {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || process.env.ADMIN_SECRET_KEY || 'acai123';
-
-    if (authHeader) {
-      const token = authHeader.replace('Bearer ', '').trim();
-      if (token !== adminPassword) {
-        return res.status(401).json({ error: 'Senha de administrador inválida.' });
-      }
-    }
-
     try {
       const statusFilter = req.query.status as string | undefined;
-      const orders = await listOrders(statusFilter);
+      const orders = await listAllOrders(statusFilter);
       return res.status(200).json({ success: true, orders });
     } catch (e: any) {
       return res.status(500).json({ error: 'Erro ao listar pedidos', message: e?.message });
     }
   }
 
-  // POST: Registrar novo pedido no banco de dados e notificar em segundo plano
+  // POST: Registrar novo pedido
   if (req.method === 'POST') {
     const startTime = Date.now();
     try {
@@ -57,87 +41,89 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Dados do pedido incompletos ou carrinho vazio.' });
       }
 
-      // 1. Recalcular e validar valores no servidor
+      // 1. Recalcular e estruturar itens e adicionais
       let calculatedSubtotal = 0;
       const parsedItems = body.items.map((item: any) => {
         const qty = Number(item.quantity) || 1;
-        const uPrice = Number(item.unitPrice) || 0;
-        const tPrice = Number(item.totalPrice) || (qty * uPrice);
+        const uPrice = Number(item.unitPrice || item.unit_price) || 0;
+        const tPrice = Number(item.totalPrice || item.total_price) || (qty * uPrice);
         calculatedSubtotal += tPrice;
 
+        const addons = (item.additionals || item.addons || []).map((addon: any) => {
+          if (typeof addon === 'string') {
+            return { addon_name: addon, addon_price: 0, quantity: 1 };
+          }
+          return {
+            addon_name: addon.name || addon.addon_name || 'Adicional',
+            addon_price: Number(addon.price || addon.addon_price) || 0,
+            quantity: Number(addon.quantity) || 1,
+          };
+        });
+
         return {
-          name: String(item.name || item.product?.name || 'Item'),
+          product_id: String(item.product_id || item.product?.id || 'acai_item'),
+          product_name: String(item.product_name || item.name || item.product?.name || 'Açaí'),
           size: item.size || item.selectedSize?.ml,
           base: item.base || item.selectedBase?.name,
-          additionals: item.additionals || item.selectedAdditionals?.map((a: any) => a.additional?.name || a.name),
-          notes: item.notes,
           quantity: qty,
-          unitPrice: uPrice,
-          totalPrice: tPrice,
+          unit_price: uPrice,
+          total_price: tPrice,
+          notes: item.notes,
+          addons,
         };
       });
 
       const fulfillmentType = body.fulfillmentType === 'pickup' || body.deliveryType === 'pickup' ? 'pickup' : 'delivery';
-      const deliveryFee = fulfillmentType === 'delivery' ? (Number(body.deliveryFee) || 5.0) : 0.0;
-      const total = calculatedSubtotal + deliveryFee;
-
-      const orderNumber = body.orderNumber || generateOrderNumber();
+      const deliveryFee = fulfillmentType === 'delivery' ? (Number(body.deliveryFee ?? body.delivery_fee) || 5.0) : 0.0;
+      const total = Number((calculatedSubtotal + deliveryFee).toFixed(2));
+      const orderNumber = body.orderNumber || body.order_number || generateShortOrderNumber();
 
       const orderData: DbOrder = {
         order_number: orderNumber,
         customer_name: body.customerName.trim(),
         customer_phone: body.customerPhone ? body.customerPhone.trim() : undefined,
         fulfillment_type: fulfillmentType,
-        address: body.address ? {
-          street: body.address.street,
-          number: body.address.number,
-          neighborhood: body.address.neighborhood,
-          complement: body.address.complement,
-          reference: body.address.reference,
-        } : undefined,
-        items: parsedItems,
+        address_street: body.address?.street || body.address_street,
+        address_number: body.address?.number || body.address_number,
+        address_neighborhood: body.address?.neighborhood || body.address_neighborhood,
+        address_complement: body.address?.complement || body.address_complement,
+        address_reference: body.address?.reference || body.address_reference,
         subtotal: Number(calculatedSubtotal.toFixed(2)),
         delivery_fee: Number(deliveryFee.toFixed(2)),
-        total: Number(total.toFixed(2)),
-        payment_method: body.paymentMethod || 'delivery',
-        payment_status: body.paymentStatus || (body.paymentMethod === 'delivery' ? 'paid_on_delivery' : 'pending'),
-        order_status: 'new', // Status inicial obrigatório
+        total,
+        payment_method: body.paymentMethod || body.payment_method || 'delivery',
+        payment_status: body.paymentStatus || body.payment_status || (body.paymentMethod === 'delivery' ? 'paid_on_delivery' : 'pending'),
+        status: 'novo',
         notes: body.notes || body.generalNotes,
-        whatsapp_status: 'pending',
-        push_status: 'pending',
-        email_status: 'pending',
-        notification_attempts: 0,
+        items: parsedItems,
       };
 
-      // 2. SALVA IMEDIATAMENTE NO BANCO DE DADOS
-      const savedOrder = await insertOrder(orderData);
+      // 2. Salva no Banco de Dados
+      const savedOrder = await insertOrderWithItems(orderData);
       const elapsedMs = Date.now() - startTime;
-      console.log(`[API /orders] Order ${savedOrder.order_number} saved to database in ${elapsedMs}ms.`);
+      console.log(`[API /orders] Order #${savedOrder.order_number} saved in ${elapsedMs}ms.`);
 
-      // 3. EXECUTA NOTIFICAÇÕES EM SEGUNDO PLANO (NON-BLOCKING)
+      // 3. Notificações em Segundo Plano (Non-Blocking)
       try {
-        waitUntil(dispatchAllBackgroundNotifications(savedOrder));
-      } catch (waitErr) {
-        // Fallback para execução assíncrona se não estiver em ambiente serverless Vercel
-        dispatchAllBackgroundNotifications(savedOrder).catch(err =>
-          console.error('[Background Notification Error]:', err)
-        );
+        waitUntil(dispatchAllBackgroundNotifications(savedOrder as any));
+      } catch {
+        dispatchAllBackgroundNotifications(savedOrder as any).catch(e => console.warn('Notification background error:', e));
       }
 
-      // 4. RETORNA HTTP 201 IMEDIATAMENTE AO CLIENTE
+      // 4. Retorna confirmação instantânea
       return res.status(201).json({
         success: true,
         orderId: savedOrder.id || savedOrder.order_number,
         orderNumber: savedOrder.order_number,
-        status: savedOrder.order_status,
+        status: savedOrder.status,
         savedInMs: elapsedMs,
       });
 
     } catch (err: any) {
-      console.error('[API /orders] Error creating order:', err);
+      console.error('[API /orders] Create error:', err);
       return res.status(500).json({
         success: false,
-        error: 'Erro interno ao salvar pedido no banco de dados.',
+        error: 'Erro ao salvar pedido no servidor.',
         message: err?.message,
       });
     }

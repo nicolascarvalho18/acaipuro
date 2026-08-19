@@ -1,14 +1,24 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+export interface DbOrderAddon {
+  id?: string;
+  addon_name: string;
+  addon_price: number;
+  quantity: number;
+}
+
 export interface DbOrderItem {
-  name: string;
+  id?: string;
+  order_id?: string;
+  product_id: string;
+  product_name: string;
   size?: string;
   base?: string;
-  additionals?: string[];
-  notes?: string;
   quantity: number;
-  unitPrice: number;
-  totalPrice: number;
+  unit_price: number;
+  total_price: number;
+  notes?: string;
+  addons?: DbOrderAddon[];
 }
 
 export interface DbOrder {
@@ -17,33 +27,48 @@ export interface DbOrder {
   customer_name: string;
   customer_phone?: string;
   fulfillment_type: 'delivery' | 'pickup';
-  address?: {
-    street?: string;
-    number?: string;
-    neighborhood?: string;
-    complement?: string;
-    reference?: string;
-  };
-  items: DbOrderItem[];
+  address_street?: string;
+  address_number?: string;
+  address_neighborhood?: string;
+  address_complement?: string;
+  address_reference?: string;
   subtotal: number;
   delivery_fee: number;
   total: number;
   payment_method: 'pix' | 'card_online' | 'delivery';
-  payment_status: 'pending' | 'approved' | 'paid_on_delivery' | 'rejected';
-  order_status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' | 'cancelled';
+  payment_status: 'pending' | 'paid' | 'paid_on_delivery' | 'rejected';
+  status: 'novo' | 'confirmado' | 'em_preparo' | 'saiu_para_entrega' | 'entregue' | 'cancelado';
   notes?: string;
-  whatsapp_status: 'pending' | 'sent' | 'failed' | 'not_configured';
-  push_status: 'pending' | 'sent' | 'failed' | 'not_configured';
-  email_status: 'pending' | 'sent' | 'failed' | 'not_configured';
-  notification_attempts: number;
-  last_notification_error?: string;
-  confirmed_at?: string;
+  whatsapp_status?: string;
   created_at?: string;
+  confirmed_at?: string;
   updated_at?: string;
+  items?: DbOrderItem[];
 }
 
-// Armazenamento em memória para garantir funcionamento 100% imediato e fallback
-const memoryOrders: DbOrder[] = [];
+export interface StoreSettings {
+  id: string;
+  is_open: boolean;
+  delivery_fee: number;
+  free_delivery_threshold: number;
+  estimated_delivery_time: string;
+  opening_hours: string;
+  whatsapp_number: string;
+  neighborhoods: string[];
+}
+
+// Armazenamento em memória sincronizado
+let memoryOrders: DbOrder[] = [];
+let memorySettings: StoreSettings = {
+  id: 'default',
+  is_open: true,
+  delivery_fee: 5.00,
+  free_delivery_threshold: 45.00,
+  estimated_delivery_time: '30 a 45 minutos',
+  opening_hours: 'Todos os dias das 13h às 23h',
+  whatsapp_number: '5513991509733',
+  neighborhoods: ['Gonzaga', 'Boqueirão', 'Embaré', 'Ponta da Praia', 'Aparecida', 'Campo Grande', 'Marapé', 'Encruzilhada', 'Vila Belmiro', 'São Vicente (Centro)', 'Itararé'],
+};
 
 export function getSupabaseClient(): SupabaseClient | null {
   const url = process.env.SUPABASE_URL;
@@ -62,51 +87,91 @@ export function getSupabaseClient(): SupabaseClient | null {
   return null;
 }
 
-export async function insertOrder(order: DbOrder): Promise<DbOrder> {
+export async function insertOrderWithItems(order: DbOrder): Promise<DbOrder> {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
 
   if (supabase) {
     try {
-      const { data, error } = await supabase
+      // 1. Inserir Pedido Principal
+      const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .insert({
           order_number: order.order_number,
           customer_name: order.customer_name,
           customer_phone: order.customer_phone,
           fulfillment_type: order.fulfillment_type,
-          address: order.address || {},
-          items: order.items,
+          address_street: order.address_street,
+          address_number: order.address_number,
+          address_neighborhood: order.address_neighborhood,
+          address_complement: order.address_complement,
+          address_reference: order.address_reference,
           subtotal: order.subtotal,
           delivery_fee: order.delivery_fee,
           total: order.total,
           payment_method: order.payment_method,
           payment_status: order.payment_status,
-          order_status: order.order_status || 'new',
+          status: 'novo',
           notes: order.notes,
-          whatsapp_status: order.whatsapp_status || 'pending',
-          push_status: order.push_status || 'pending',
-          email_status: order.email_status || 'pending',
-          notification_attempts: 0,
+          whatsapp_status: 'pending',
         })
         .select()
         .single();
 
-      if (error) {
-        console.error('[DB] Supabase insert error, saving to memory fallback:', error);
-      } else if (data) {
-        console.log(`[DB] Order ${order.order_number} saved to Supabase successfully.`);
-        return data as DbOrder;
+      if (orderError || !orderData) {
+        console.error('[DB] Supabase insert order error:', orderError);
+      } else {
+        const orderId = orderData.id;
+
+        // 2. Inserir Itens do Pedido
+        if (order.items && order.items.length > 0) {
+          for (const item of order.items) {
+            const { data: itemData, error: itemError } = await supabase
+              .from('order_items')
+              .insert({
+                order_id: orderId,
+                product_id: item.product_id || 'item',
+                product_name: item.product_name,
+                size: item.size,
+                base: item.base,
+                quantity: item.quantity || 1,
+                unit_price: item.unit_price,
+                total_price: item.total_price,
+                notes: item.notes,
+              })
+              .select()
+              .single();
+
+            // 3. Inserir Adicionais do Item
+            if (!itemError && itemData && item.addons && item.addons.length > 0) {
+              const addonsToInsert = item.addons.map(addon => ({
+                order_item_id: itemData.id,
+                addon_name: addon.addon_name,
+                addon_price: addon.addon_price || 0,
+                quantity: addon.quantity || 1,
+              }));
+
+              await supabase.from('order_item_addons').insert(addonsToInsert);
+            }
+          }
+        }
+
+        console.log(`[DB] Order ${order.order_number} saved to Supabase.`);
+        return {
+          ...orderData,
+          items: order.items,
+        };
       }
     } catch (e) {
-      console.error('[DB] Supabase insert exception:', e);
+      console.error('[DB] Supabase order insertion exception:', e);
     }
   }
 
   // Fallback em memória
   const newOrder: DbOrder = {
     ...order,
-    id: `local_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    id: `ord_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    status: 'novo',
     created_at: now,
     updated_at: now,
   };
@@ -115,50 +180,121 @@ export async function insertOrder(order: DbOrder): Promise<DbOrder> {
   return newOrder;
 }
 
-export async function listOrders(statusFilter?: string): Promise<DbOrder[]> {
+export async function listAllOrders(statusFilter?: string): Promise<DbOrder[]> {
   const supabase = getSupabaseClient();
 
   if (supabase) {
     try {
       let query = supabase
         .from('orders')
-        .select('*')
+        .select(`
+          *,
+          order_items (
+            id,
+            product_id,
+            product_name,
+            size,
+            base,
+            quantity,
+            unit_price,
+            total_price,
+            notes,
+            order_item_addons (
+              id,
+              addon_name,
+              addon_price,
+              quantity
+            )
+          )
+        `)
         .order('created_at', { ascending: false });
 
       if (statusFilter && statusFilter !== 'all') {
-        query = query.eq('order_status', statusFilter);
+        query = query.eq('status', statusFilter);
       }
 
       const { data, error } = await query;
       if (!error && data) {
-        return data as DbOrder[];
+        return data.map(o => ({
+          ...o,
+          items: (o.order_items || []).map((it: any) => ({
+            ...it,
+            addons: it.order_item_addons || [],
+          })),
+        }));
       }
-      console.error('[DB] Supabase list error:', error);
+      console.error('[DB] Supabase list orders error:', error);
     } catch (e) {
       console.error('[DB] Supabase list exception:', e);
     }
   }
 
-  // Fallback memória
   if (statusFilter && statusFilter !== 'all') {
-    return memoryOrders.filter(o => o.order_status === statusFilter);
+    return memoryOrders.filter(o => o.status === statusFilter);
   }
   return memoryOrders;
 }
 
-export async function updateOrderStatus(
-  orderIdOrNumber: string,
-  newStatus: DbOrder['order_status']
+export async function getOrderByIdOrNumber(idOrNumber: string): Promise<DbOrder | null> {
+  const supabase = getSupabaseClient();
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`
+          *,
+          order_items (
+            id,
+            product_id,
+            product_name,
+            size,
+            base,
+            quantity,
+            unit_price,
+            total_price,
+            notes,
+            order_item_addons (
+              id,
+              addon_name,
+              addon_price,
+              quantity
+            )
+          )
+        `)
+        .or(`id.eq.${idOrNumber},order_number.eq.${idOrNumber}`)
+        .single();
+
+      if (!error && data) {
+        return {
+          ...data,
+          items: (data.order_items || []).map((it: any) => ({
+            ...it,
+            addons: it.order_item_addons || [],
+          })),
+        };
+      }
+    } catch (e) {
+      console.error('[DB] Error getting order:', e);
+    }
+  }
+
+  return memoryOrders.find(o => o.id === idOrNumber || o.order_number === idOrNumber) || null;
+}
+
+export async function updateOrderStatusDb(
+  idOrNumber: string,
+  newStatus: DbOrder['status']
 ): Promise<DbOrder | null> {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
 
   const updateData: any = {
-    order_status: newStatus,
+    status: newStatus,
     updated_at: now,
   };
 
-  if (newStatus === 'confirmed') {
+  if (newStatus === 'confirmado') {
     updateData.confirmed_at = now;
   }
 
@@ -167,72 +303,73 @@ export async function updateOrderStatus(
       const { data, error } = await supabase
         .from('orders')
         .update(updateData)
-        .or(`id.eq.${orderIdOrNumber},order_number.eq.${orderIdOrNumber}`)
+        .or(`id.eq.${idOrNumber},order_number.eq.${idOrNumber}`)
         .select()
         .single();
 
       if (!error && data) {
-        return data as DbOrder;
+        return data;
       }
     } catch (e) {
-      console.error('[DB] Supabase update exception:', e);
+      console.error('[DB] Supabase update status exception:', e);
     }
   }
 
-  // Fallback memória
-  const order = memoryOrders.find(
-    o => o.id === orderIdOrNumber || o.order_number === orderIdOrNumber
-  );
+  const order = memoryOrders.find(o => o.id === idOrNumber || o.order_number === idOrNumber);
   if (order) {
-    order.order_status = newStatus;
+    order.status = newStatus;
     order.updated_at = now;
-    if (newStatus === 'confirmed') {
-      order.confirmed_at = now;
-    }
+    if (newStatus === 'confirmado') order.confirmed_at = now;
     return order;
   }
-
   return null;
 }
 
-export async function updateNotificationResults(
-  orderIdOrNumber: string,
-  updates: {
-    whatsapp_status?: DbOrder['whatsapp_status'];
-    push_status?: DbOrder['push_status'];
-    email_status?: DbOrder['email_status'];
-    last_notification_error?: string;
-  }
-): Promise<void> {
+export async function getStoreSettings(): Promise<StoreSettings> {
   const supabase = getSupabaseClient();
 
   if (supabase) {
     try {
-      await supabase
-        .from('orders')
-        .update({
-          ...updates,
-          notification_attempts: 1,
-          updated_at: new Date().toISOString(),
-        })
-        .or(`id.eq.${orderIdOrNumber},order_number.eq.${orderIdOrNumber}`);
-      return;
+      const { data, error } = await supabase
+        .from('store_settings')
+        .select('*')
+        .eq('id', 'default')
+        .single();
+
+      if (!error && data) {
+        return data as StoreSettings;
+      }
     } catch (e) {
-      console.error('[DB] Supabase update notification exception:', e);
+      console.error('[DB] Error getting store settings:', e);
     }
   }
 
-  const order = memoryOrders.find(
-    o => o.id === orderIdOrNumber || o.order_number === orderIdOrNumber
-  );
-  if (order) {
-    if (updates.whatsapp_status) order.whatsapp_status = updates.whatsapp_status;
-    if (updates.push_status) order.push_status = updates.push_status;
-    if (updates.email_status) order.email_status = updates.email_status;
-    if (updates.last_notification_error !== undefined) {
-      order.last_notification_error = updates.last_notification_error;
+  return memorySettings;
+}
+
+export async function updateStoreSettings(updates: Partial<StoreSettings>): Promise<StoreSettings> {
+  const supabase = getSupabaseClient();
+
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('store_settings')
+        .upsert({
+          id: 'default',
+          ...updates,
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (!error && data) {
+        return data as StoreSettings;
+      }
+    } catch (e) {
+      console.error('[DB] Error updating store settings:', e);
     }
-    order.notification_attempts += 1;
-    order.updated_at = new Date().toISOString();
   }
+
+  memorySettings = { ...memorySettings, ...updates };
+  return memorySettings;
 }

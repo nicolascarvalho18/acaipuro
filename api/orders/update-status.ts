@@ -1,18 +1,16 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { updateOrderStatus, DbOrder } from '../_services/db';
+import { updateOrderStatusDb, DbOrder } from '../_services/db';
 
-const VALID_STATUSES: DbOrder['order_status'][] = [
-  'new',
-  'confirmed',
-  'preparing',
-  'ready',
-  'out_for_delivery',
-  'delivered',
-  'cancelled',
+const VALID_STATUSES: DbOrder['status'][] = [
+  'novo',
+  'confirmado',
+  'em_preparo',
+  'saiu_para_entrega',
+  'entregue',
+  'cancelado',
 ];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,PATCH,OPTIONS');
@@ -30,16 +28,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const authHeader = req.headers.authorization;
-    const adminPassword = process.env.ADMIN_PASSWORD || process.env.ADMIN_SECRET_KEY || 'acai123';
-
-    if (authHeader) {
-      const token = authHeader.replace('Bearer ', '').trim();
-      if (token !== adminPassword) {
-        return res.status(401).json({ error: 'Não autorizado.' });
-      }
-    }
-
     const { orderId, status } = req.body;
 
     if (!orderId || !status) {
@@ -50,7 +38,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: `Status inválido. Use: ${VALID_STATUSES.join(', ')}` });
     }
 
-    const updated = await updateOrderStatus(orderId, status);
+    const updated = await updateOrderStatusDb(orderId, status);
 
     if (!updated) {
       return res.status(404).json({ error: 'Pedido não encontrado.' });

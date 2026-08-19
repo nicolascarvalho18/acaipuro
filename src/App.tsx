@@ -14,7 +14,9 @@ import { CartDrawer } from './components/CartDrawer';
 import { FloatingCartBar } from './components/FloatingCartBar';
 import { CheckoutModal } from './components/CheckoutModal';
 import { PaymentResultModal } from './components/PaymentResultModal';
-import { AdminPanel } from './components/AdminPanel';
+import { OrderTrackingModal } from './components/OrderTrackingModal';
+import { AdminDashboard } from './components/admin/AdminDashboard';
+import { AdminLogin } from './components/admin/AdminLogin';
 import { ContactSection } from './components/ContactSection';
 import { Footer } from './components/Footer';
 import { ToastNotification } from './components/ToastNotification';
@@ -29,7 +31,13 @@ const MainContent: React.FC = () => {
   
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isAdminOpen, setIsAdminOpen] = useState(false);
+
+  // Roteamento Administrativo
+  const [isAdminRoute, setIsAdminRoute] = useState(false);
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+
+  // Acompanhamento de Pedido do Cliente
+  const [trackingOrderNumber, setTrackingOrderNumber] = useState<string | null>(null);
 
   const loadCatalog = async () => {
     setIsLoading(true);
@@ -50,13 +58,55 @@ const MainContent: React.FC = () => {
   useEffect(() => {
     loadCatalog();
 
-    // Abrir painel se a URL for /admin/pedidos, /admin ou tiver ?admin=true
+    // Checar se a URL é /admin ou tem parâmetro ?admin=true
     const path = window.location.pathname.toLowerCase();
     const params = new URLSearchParams(window.location.search);
-    if (path.includes('/admin') || params.get('admin') === 'true' || params.get('admin') === '1') {
-      setIsAdminOpen(true);
+    const hasAdminParam = params.get('admin') === 'true' || params.get('admin') === '1';
+
+    if (path.includes('/admin') || hasAdminParam) {
+      setIsAdminRoute(true);
+      const token = sessionStorage.getItem('admin_auth_token');
+      if (token) {
+        setIsAdminAuthenticated(true);
+      }
     }
   }, []);
+
+  const handleOpenAdmin = () => {
+    setIsAdminRoute(true);
+    const token = sessionStorage.getItem('admin_auth_token');
+    if (token) {
+      setIsAdminAuthenticated(true);
+    }
+    window.history.pushState({}, '', '/admin/pedidos');
+  };
+
+  const handleAdminLogout = () => {
+    sessionStorage.removeItem('admin_auth_token');
+    setIsAdminAuthenticated(false);
+    setIsAdminRoute(false);
+    window.history.pushState({}, '', '/');
+  };
+
+  const handleAdminLoginSuccess = () => {
+    setIsAdminAuthenticated(true);
+  };
+
+  // Se estiver na rota /admin
+  if (isAdminRoute) {
+    if (!isAdminAuthenticated) {
+      return (
+        <AdminLogin
+          onSuccess={handleAdminLoginSuccess}
+          onCancel={() => {
+            setIsAdminRoute(false);
+            window.history.pushState({}, '', '/');
+          }}
+        />
+      );
+    }
+    return <AdminDashboard onLogout={handleAdminLogout} />;
+  }
 
   // Contagem de produtos por categoria
   const categoryCounts = useMemo(() => {
@@ -185,7 +235,7 @@ const MainContent: React.FC = () => {
       <ContactSection />
 
       {/* Rodapé */}
-      <Footer onOpenAdmin={() => setIsAdminOpen(true)} />
+      <Footer onOpenAdmin={handleOpenAdmin} />
 
       {/* Modais e Drawers */}
       {selectedProductForModal && (
@@ -199,7 +249,16 @@ const MainContent: React.FC = () => {
       <FloatingCartBar />
       <CheckoutModal />
       <PaymentResultModal />
-      <AdminPanel isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
+      
+      {/* Modal de Acompanhamento em Tempo Real do Cliente */}
+      {trackingOrderNumber && (
+        <OrderTrackingModal
+          orderNumber={trackingOrderNumber}
+          isOpen={!!trackingOrderNumber}
+          onClose={() => setTrackingOrderNumber(null)}
+        />
+      )}
+
       <ToastNotification />
 
     </div>
