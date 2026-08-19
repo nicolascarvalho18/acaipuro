@@ -24,64 +24,64 @@ export const Hero: React.FC = () => {
   };
 
   return (
-    <section id="inicio" className="bg-[#FBFAFC] py-12 sm:py-16 md:py-20 lg:py-24">
+    <section id="inicio" className="bg-[#FCFAF7] py-10 sm:py-14 md:py-16">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8">
         
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-center">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
           
-          {/* Coluna Esquerda: Textos e Ações */}
-          <div className="lg:col-span-6 space-y-6 text-left">
+          {/* Coluna Esquerda: Conteúdo (~46%) */}
+          <div className="lg:col-span-5 space-y-5 text-left">
             
-            <p className="text-xs sm:text-sm font-semibold tracking-wider text-[#716B76] uppercase">
+            <p className="text-xs sm:text-sm font-semibold tracking-wider text-[#726C74] uppercase">
               Açaí preparado na hora
             </p>
 
-            <h1 className="text-3xl sm:text-5xl lg:text-[54px] font-extrabold text-[#26222A] tracking-tight leading-[1.08] font-['DM_Sans']">
+            <h1 className="text-4xl sm:text-5xl lg:text-[56px] font-bold text-[#28242A] tracking-tight leading-[1.08] font-['DM_Sans']">
               Seu açaí, do seu jeito.
             </h1>
 
-            <p className="text-base sm:text-lg text-[#716B76] leading-relaxed max-w-lg font-normal">
+            <p className="text-base sm:text-lg text-[#726C74] leading-[1.6] max-w-[460px] font-normal">
               Escolha o tamanho, monte com seus acompanhamentos favoritos e faça seu pedido pelo WhatsApp.
             </p>
 
-            {/* Botões */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2">
+            {/* Botões de Ação */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
               <button
                 onClick={handleScrollToMenu}
-                className="h-12 px-7 rounded-xl bg-[#572185] hover:bg-[#431868] text-white text-sm font-semibold tracking-wide transition-all shadow-xs flex items-center justify-center cursor-pointer"
+                className="h-12 px-7 rounded-[12px] bg-[#69318A] hover:bg-[#572185] text-white text-sm font-semibold tracking-wide transition-all shadow-xs flex items-center justify-center cursor-pointer"
               >
                 Ver cardápio
               </button>
 
               <button
                 onClick={handleBuildAcai}
-                className="h-12 px-7 rounded-xl bg-white hover:bg-[#EEE8F4] text-[#572185] border border-[#ECE8F0] text-sm font-semibold tracking-wide transition-all flex items-center justify-center cursor-pointer"
+                className="h-12 px-7 rounded-[12px] bg-white hover:bg-[#F3EDF6] text-[#69318A] border border-[#ECE8F0] text-sm font-semibold tracking-wide transition-all flex items-center justify-center cursor-pointer"
               >
                 Montar meu açaí
               </button>
             </div>
 
             {/* Informações Objetivas */}
-            <div className="pt-6 border-t border-[#ECE8F0] flex flex-wrap items-center gap-6 text-xs sm:text-sm text-[#716B76]">
+            <div className="pt-5 border-t border-[#ECE8F0] flex flex-wrap items-center gap-6 text-xs sm:text-sm text-[#726C74]">
               <div className="flex items-center gap-2">
-                <Clock className="w-4 h-4 text-[#572185]" />
+                <Clock className="w-4 h-4 text-[#69318A] stroke-[1.8]" />
                 <span>Entrega em 30 a 45 minutos</span>
               </div>
               <div className="flex items-center gap-2">
-                <Truck className="w-4 h-4 text-[#572185]" />
+                <Truck className="w-4 h-4 text-[#69318A] stroke-[1.8]" />
                 <span>Frete grátis a partir de R$ 45</span>
               </div>
             </div>
 
           </div>
 
-          {/* Coluna Direita: Fotografia Real e Profissional de Açaí */}
-          <div className="lg:col-span-6">
-            <div className="relative rounded-2xl md:rounded-3xl overflow-hidden bg-white border border-[#ECE8F0] shadow-sm">
+          {/* Coluna Direita: Fotografia Gastronômica Real (~54%) */}
+          <div className="lg:col-span-7">
+            <div className="relative rounded-[18px] overflow-hidden bg-white border border-[#ECE8F0] shadow-xs">
               <img
                 src="https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=1200&q=85"
-                alt="Tigela de açaí artesanal roxo com morango fresco, banana fatiada e granola"
-                className="w-full h-80 sm:h-[420px] lg:h-[480px] object-cover"
+                alt="Tigela de açaí roxo cremoso com morangos frescos, banana fatiada e granola crocante"
+                className="w-full h-72 sm:h-[400px] lg:h-[460px] object-cover"
                 loading="eager"
               />
             </div>

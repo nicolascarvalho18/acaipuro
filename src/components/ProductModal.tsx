@@ -3,7 +3,7 @@ import type { Product, ProductSize, BaseOption, AdditionalItem, SelectedAddition
 import { useCart } from '../contexts/CartContext';
 import { ALL_ADDITIONALS, DEFAULT_SIZES, BASE_OPTIONS } from '../data/mockProducts';
 import { formatCurrency } from '../utils/formatters';
-import { X, Plus, Minus, Check } from 'lucide-react';
+import { X, Plus, Minus } from 'lucide-react';
 
 interface ProductModalProps {
   product: Product;
@@ -215,20 +215,20 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
         {/* Cabeçalho do Modal */}
         <div className="p-4 sm:p-5 border-b border-[#ECE8F0] flex items-center justify-between shrink-0 bg-white">
           <div>
-            <h2 className="text-lg font-bold text-[#26222A] font-['DM_Sans']">
+            <h2 className="text-lg font-bold text-[#28242A] font-['DM_Sans']">
               {product.name}
             </h2>
-            <p className="text-xs text-[#716B76] mt-0.5 line-clamp-1">
+            <p className="text-xs text-[#726C74] mt-0.5 line-clamp-1">
               {product.description}
             </p>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 text-[#716B76] hover:text-[#26222A] hover:bg-[#FBFAFC] rounded-xl transition-colors cursor-pointer"
+            className="p-2 text-[#726C74] hover:text-[#28242A] hover:bg-[#FCFAF7] rounded-xl transition-colors cursor-pointer"
             aria-label="Fechar"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5 stroke-[1.8]" />
           </button>
         </div>
 
@@ -239,10 +239,10 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
           {product.sizes && product.sizes.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold text-[#26222A] uppercase tracking-wider">
+                <h3 className="text-xs font-semibold text-[#28242A] uppercase tracking-wider">
                   1. Escolha o tamanho
                 </h3>
-                <span className="text-[11px] text-[#716B76]">Obrigatório</span>
+                <span className="text-[11px] text-[#726C74]">Obrigatório</span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -255,12 +255,12 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
                       onClick={() => setSelectedSize(size)}
                       className={`p-3 rounded-xl border text-center transition-all cursor-pointer relative ${
                         isSelected
-                          ? 'border-[#542381] bg-[#F4EFF8] text-[#542381]'
-                          : 'border-[#ECE8F0] hover:border-[#D8CFE3] bg-white text-[#26222A]'
+                          ? 'border-[#69318A] bg-[#F3EDF6] text-[#69318A]'
+                          : 'border-[#ECE8F0] hover:border-[#D8CFE3] bg-white text-[#28242A]'
                       }`}
                     >
                       <p className="text-sm font-bold font-['DM_Sans']">{size.ml}</p>
-                      <p className="text-xs font-medium text-[#716B76] mt-0.5">{formatCurrency(size.price)}</p>
+                      <p className="text-xs font-medium text-[#726C74] mt-0.5">{formatCurrency(size.price)}</p>
                     </button>
                   );
                 })}
@@ -275,7 +275,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
                 <h3 className="text-xs font-semibold text-[#26222A] uppercase tracking-wider">
                   2. Escolha a base
                 </h3>
-                <span className="text-[11px] text-[#716B76]">Obrigatório</span>
+                <span className="text-[11px] text-[#726C74]">Obrigatório</span>
               </div>
 
               <div className="space-y-2">
@@ -287,19 +287,19 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
                       onClick={() => setSelectedBase(base)}
                       className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
                         isSelected
-                          ? 'border-[#542381] bg-[#F4EFF8]'
+                          ? 'border-[#69318A] bg-[#F3EDF6]'
                           : 'border-[#ECE8F0] hover:border-[#D8CFE3] bg-white'
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
                         <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                          isSelected ? 'border-[#542381] bg-[#542381]' : 'border-[#716B76]'
+                          isSelected ? 'border-[#69318A] bg-[#69318A]' : 'border-[#726C74]'
                         }`}>
                           {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white"></div>}
                         </div>
-                        <span className="text-xs sm:text-sm font-medium text-[#26222A]">{base.name}</span>
+                        <span className="text-xs sm:text-sm font-medium text-[#28242A]">{base.name}</span>
                       </div>
-                      <span className="text-xs text-[#716B76]">
+                      <span className="text-xs text-[#726C74]">
                         {base.extraPrice === 0 ? 'Incluso' : `+${formatCurrency(base.extraPrice)}`}
                       </span>
                     </div>
@@ -317,7 +317,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
                   3. Escolha os adicionais
                 </h3>
                 {maxFree > 0 && (
-                  <span className="text-xs font-medium text-[#542381]">
+                  <span className="text-xs font-semibold text-[#69318A]">
                     Escolha até {maxFree} adicionais grátis ({freeCount}/{maxFree})
                   </span>
                 )}
@@ -332,8 +332,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
                     onClick={() => setActiveCategory(cat.id)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all cursor-pointer ${
                       activeCategory === cat.id
-                        ? 'bg-[#542381] text-white'
-                        : 'bg-[#FBFAFC] text-[#716B76] hover:bg-[#F4EFF8] border border-[#ECE8F0]'
+                        ? 'bg-[#69318A] text-white shadow-2xs'
+                        : 'bg-[#FCFAF7] text-[#726C74] hover:bg-[#F3EDF6] border border-[#ECE8F0]'
                     }`}
                   >
                     {cat.label}
@@ -352,7 +352,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
                       key={add.id}
                       className={`p-2.5 rounded-xl border transition-all flex items-center justify-between gap-2 ${
                         isSelected
-                          ? 'border-[#542381] bg-[#F4EFF8]'
+                          ? 'border-[#69318A] bg-[#F3EDF6]'
                           : 'border-[#ECE8F0] hover:border-[#D8CFE3] bg-white'
                       }`}
                     >
@@ -360,8 +360,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
                         className="flex-1 min-w-0 cursor-pointer"
                         onClick={() => handleToggleAdditional(add)}
                       >
-                        <p className="text-xs font-medium text-[#26222A] truncate">{add.name}</p>
-                        <p className="text-[11px] text-[#716B76] mt-0.5">
+                        <p className="text-xs font-medium text-[#28242A] truncate">{add.name}</p>
+                        <p className="text-[11px] text-[#726C74] mt-0.5">
                           {add.isFreeEligible && maxFree > 0 ? 'Grátis elegível' : `+${formatCurrency(add.price)}`}
                         </p>
                       </div>
@@ -371,26 +371,26 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
                           <button
                             type="button"
                             onClick={() => handleDecrementAdditional(add.id)}
-                            className="w-5 h-5 rounded text-[#26222A] hover:bg-[#FBFAFC] flex items-center justify-center font-bold text-xs"
+                            className="w-5 h-5 rounded text-[#28242A] hover:bg-[#FCFAF7] flex items-center justify-center font-bold text-xs"
                           >
-                            <Minus className="w-3 h-3" />
+                            <Minus className="w-3 h-3 stroke-[2]" />
                           </button>
-                          <span className="text-xs font-bold text-[#26222A] w-4 text-center">{qty}</span>
+                          <span className="text-xs font-bold text-[#28242A] w-4 text-center">{qty}</span>
                           <button
                             type="button"
                             onClick={() => handleIncrementAdditional(add.id)}
-                            className="w-5 h-5 rounded text-[#26222A] hover:bg-[#FBFAFC] flex items-center justify-center font-bold text-xs"
+                            className="w-5 h-5 rounded text-[#28242A] hover:bg-[#FCFAF7] flex items-center justify-center font-bold text-xs"
                           >
-                            <Plus className="w-3 h-3" />
+                            <Plus className="w-3 h-3 stroke-[2]" />
                           </button>
                         </div>
                       ) : (
                         <button
                           type="button"
                           onClick={() => handleToggleAdditional(add)}
-                          className="w-6 h-6 rounded-lg bg-[#FBFAFC] hover:bg-[#542381] hover:text-white text-[#716B76] flex items-center justify-center transition-colors cursor-pointer"
+                          className="w-6 h-6 rounded-lg bg-[#FCFAF7] hover:bg-[#69318A] hover:text-white text-[#726C74] flex items-center justify-center transition-colors cursor-pointer"
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <Plus className="w-3.5 h-3.5 stroke-[2]" />
                         </button>
                       )}
                     </div>
@@ -402,7 +402,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
 
           {/* PASSO 4: Observações */}
           <div className="pt-4 border-t border-[#ECE8F0]">
-            <label htmlFor="modal-notes" className="block text-xs font-semibold text-[#26222A] uppercase tracking-wider mb-1.5">
+            <label htmlFor="modal-notes" className="block text-xs font-semibold text-[#28242A] uppercase tracking-wider mb-1.5">
               4. Observações (Opcional)
             </label>
             <textarea
@@ -411,7 +411,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               placeholder="Ex: Leite em pó separado, morango por cima..."
-              className="w-full p-2.5 bg-[#FBFAFC] border border-[#ECE8F0] rounded-xl text-xs sm:text-sm text-[#26222A] placeholder-[#716B76] focus:bg-white focus:border-[#542381] outline-none resize-none"
+              className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs sm:text-sm text-[#28242A] placeholder-[#726C74] focus:bg-white focus:border-[#69318A] outline-none resize-none"
             ></textarea>
           </div>
 
@@ -420,28 +420,28 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
         {/* Rodapé do Modal */}
         <div className="p-4 sm:p-5 bg-white border-t border-[#ECE8F0] flex items-center justify-between gap-3 shrink-0">
           
-          <div className="flex items-center gap-1.5 bg-[#FBFAFC] p-1 rounded-xl border border-[#ECE8F0]">
+          <div className="flex items-center gap-1.5 bg-[#FCFAF7] p-1 rounded-xl border border-[#ECE8F0]">
             <button
               type="button"
               onClick={() => setQuantity(Math.max(1, quantity - 1))}
-              className="w-7 h-7 rounded-lg bg-white hover:bg-[#ECE8F0] text-[#26222A] flex items-center justify-center"
+              className="w-7 h-7 rounded-lg bg-white hover:bg-[#ECE8F0] text-[#28242A] flex items-center justify-center"
             >
-              <Minus className="w-3.5 h-3.5" />
+              <Minus className="w-3.5 h-3.5 stroke-[2]" />
             </button>
-            <span className="text-xs font-bold text-[#26222A] w-5 text-center">{quantity}</span>
+            <span className="text-xs font-bold text-[#28242A] w-5 text-center">{quantity}</span>
             <button
               type="button"
               onClick={() => setQuantity(quantity + 1)}
-              className="w-7 h-7 rounded-lg bg-white hover:bg-[#ECE8F0] text-[#26222A] flex items-center justify-center"
+              className="w-7 h-7 rounded-lg bg-white hover:bg-[#ECE8F0] text-[#28242A] flex items-center justify-center"
             >
-              <Plus className="w-3.5 h-3.5" />
+              <Plus className="w-3.5 h-3.5 stroke-[2]" />
             </button>
           </div>
 
           <button
             type="button"
             onClick={handleAddToCart}
-            className="flex-1 h-11 px-5 bg-[#542381] hover:bg-[#431868] text-white font-medium text-xs sm:text-sm rounded-xl transition-all flex items-center justify-between cursor-pointer"
+            className="flex-1 h-11 px-5 bg-[#69318A] hover:bg-[#572185] text-white font-medium text-xs sm:text-sm rounded-xl transition-all flex items-center justify-between cursor-pointer shadow-xs"
           >
             <span>Adicionar ao carrinho</span>
             <span className="font-bold">{formatCurrency(totalPrice)}</span>

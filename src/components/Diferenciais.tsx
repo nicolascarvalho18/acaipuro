@@ -26,11 +26,11 @@ export const Diferenciais: React.FC = () => {
   ];
 
   return (
-    <section id="sobre" className="py-14 sm:py-18 bg-white border-y border-[#ECE8F0]">
+    <section id="sobre" className="py-14 sm:py-16 bg-white border-y border-[#ECE8F0]">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8">
         
         <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
-          <h2 className="text-2xl sm:text-3xl font-bold text-[#26222A] font-['DM_Sans'] tracking-tight">
+          <h2 className="text-2xl sm:text-3xl font-bold text-[#28242A] font-['DM_Sans'] tracking-tight">
             Por que pedir com a gente?
           </h2>
         </div>
@@ -41,15 +41,15 @@ export const Diferenciais: React.FC = () => {
             return (
               <div 
                 key={index}
-                className="bg-[#FBFAFC] p-6 rounded-2xl border border-[#ECE8F0] flex flex-col justify-start"
+                className="bg-[#FCFAF7] p-6 sm:p-7 rounded-2xl border border-[#ECE8F0] flex flex-col justify-start hover:-translate-y-0.5 hover:shadow-xs transition-all duration-200"
               >
-                <div className="w-10 h-10 rounded-xl bg-white text-[#542381] border border-[#ECE8F0] flex items-center justify-center mb-4 shrink-0 shadow-2xs">
-                  <Icon className="w-5 h-5" />
+                <div className="w-11 h-11 rounded-xl bg-white text-[#69318A] border border-[#ECE8F0] flex items-center justify-center mb-4 shrink-0 shadow-2xs">
+                  <Icon className="w-5 h-5 stroke-[1.8]" />
                 </div>
-                <h3 className="text-base font-bold text-[#26222A] mb-1.5 font-['DM_Sans']">
+                <h3 className="text-base font-bold text-[#28242A] mb-1.5 font-['DM_Sans']">
                   {item.title}
                 </h3>
-                <p className="text-xs sm:text-sm text-[#716B76] leading-relaxed">
+                <p className="text-xs sm:text-sm text-[#726C74] leading-relaxed">
                   {item.description}
                 </p>
               </div>

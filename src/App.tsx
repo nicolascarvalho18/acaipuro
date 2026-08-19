@@ -85,7 +85,7 @@ const MainContent: React.FC = () => {
   }, [products, selectedCategory, searchQuery]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#FBFAFC] text-[#26222A] font-sans">
+    <div className="min-h-screen flex flex-col bg-[#FCFAF7] text-[#28242A] font-sans">
       
       {/* Barra de Avisos Superior */}
       <AnnouncementBar />
@@ -102,15 +102,15 @@ const MainContent: React.FC = () => {
       {/* Combos da Semana */}
       <Promotions products={products} />
 
-      {/* Seção do Cardápio */}
+      {/* Seção do Cardápio com 3 colunas no desktop */}
       <section id="cardapio" className="py-14 sm:py-18 bg-white border-t border-[#ECE8F0]">
         <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8">
           
           <div className="text-center max-w-2xl mx-auto mb-10">
-            <h2 className="text-2xl sm:text-3xl font-bold text-[#26222A] font-['DM_Sans'] tracking-tight">
+            <h2 className="text-2xl sm:text-3xl font-bold text-[#28242A] font-['DM_Sans'] tracking-tight">
               Nosso cardápio
             </h2>
-            <p className="text-sm text-[#716B76] mt-1.5">
+            <p className="text-sm text-[#726C74] mt-1.5">
               Escolha seu açaí, personalize os adicionais e finalize pelo WhatsApp.
             </p>
           </div>
@@ -118,7 +118,7 @@ const MainContent: React.FC = () => {
           {loadError && (
             <div className="max-w-lg mx-auto mb-6 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 stroke-[1.8]" />
                 <span>{loadError}</span>
               </div>
               <button
@@ -141,13 +141,13 @@ const MainContent: React.FC = () => {
 
           {isLoading ? (
             <div className="py-20 flex flex-col items-center justify-center space-y-3">
-              <div className="w-8 h-8 border-3 border-[#EEE8F4] border-t-[#572185] rounded-full animate-spin"></div>
-              <p className="text-xs text-[#716B76]">Carregando cardápio...</p>
+              <div className="w-8 h-8 border-3 border-[#F3EDF6] border-t-[#69318A] rounded-full animate-spin"></div>
+              <p className="text-xs text-[#726C74]">Carregando cardápio...</p>
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="py-16 text-center max-w-md mx-auto space-y-3 bg-[#FBFAFC] p-8 rounded-2xl border border-[#ECE8F0]">
-              <h3 className="text-base font-bold text-[#26222A] font-['DM_Sans']">Nenhum item encontrado</h3>
-              <p className="text-xs text-[#716B76]">
+            <div className="py-16 text-center max-w-md mx-auto space-y-3 bg-[#FCFAF7] p-8 rounded-2xl border border-[#ECE8F0]">
+              <h3 className="text-base font-bold text-[#28242A] font-['DM_Sans']">Nenhum item encontrado</h3>
+              <p className="text-xs text-[#726C74]">
                 Não encontramos produtos correspondentes a "{searchQuery}".
               </p>
               <button
@@ -155,13 +155,13 @@ const MainContent: React.FC = () => {
                   setSearchQuery('');
                   setSelectedCategory('all');
                 }}
-                className="px-4 py-2 bg-[#572185] text-white text-xs font-medium rounded-xl hover:bg-[#431868] transition-all cursor-pointer"
+                className="px-4 py-2 bg-[#69318A] text-white text-xs font-medium rounded-xl hover:bg-[#572185] transition-all cursor-pointer shadow-xs"
               >
                 Limpar busca
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredProducts.map((product) => (
                 <ProductCard key={product.id} product={product} />
               ))}

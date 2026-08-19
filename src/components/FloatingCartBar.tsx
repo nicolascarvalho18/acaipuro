@@ -12,10 +12,10 @@ export const FloatingCartBar: React.FC = () => {
     <div className="fixed bottom-4 inset-x-4 z-40 md:hidden">
       <button
         onClick={() => setIsCartOpen(true)}
-        className="w-full h-12 bg-[#542381] hover:bg-[#431868] text-white rounded-xl shadow-lg flex items-center justify-between px-5 font-medium text-sm transition-all cursor-pointer"
+        className="w-full h-12 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl shadow-lg flex items-center justify-between px-5 font-medium text-sm transition-all cursor-pointer"
       >
         <div className="flex items-center gap-2">
-          <ShoppingBag className="w-4 h-4" />
+          <ShoppingBag className="w-4 h-4 stroke-[1.8]" />
           <span>Ver sacola</span>
         </div>
         <span className="font-bold">{formatCurrency(total)}</span>
