@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import type { Product, ProductSize, BaseOption, AdditionalItem, SelectedAdditional } from '../types';
 import { useCart } from '../contexts/CartContext';
-import { ALL_ADDITIONALS } from '../data/mockProducts';
+import { useStore } from '../contexts/StoreContext';
 import { formatCurrency } from '../utils/formatters';
 import { X, Plus, Minus, Check } from 'lucide-react';
 
@@ -12,6 +12,9 @@ interface ProductModalProps {
 
 export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) => {
   const { addToCart } = useCart();
+  const { addons: storeAddons, isOpen } = useStore();
+
+  const availableAddons = storeAddons && storeAddons.length > 0 ? storeAddons : [];
 
   const hasSizes = !!(product.sizes && product.sizes.length > 0);
   const hasBases = product.category === 'acai' && !!(product.bases && product.bases.length > 0);
@@ -90,7 +93,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
 
     const allSelectedItems: { item: AdditionalItem; qty: number }[] = [];
     Object.entries(selectedAdditionalsMap).forEach(([id, qty]) => {
-      const addObj = ALL_ADDITIONALS.find(a => a.id === id);
+      const addObj = availableAddons.find(a => a.id === id);
       if (addObj && qty > 0) {
         allSelectedItems.push({ item: addObj, qty });
       }
@@ -171,7 +174,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
       totalAdditionalsCost: extraCost,
       freeCount: usedFree,
     };
-  }, [selectedAdditionalsMap, maxFree]);
+  }, [selectedAdditionalsMap, maxFree, availableAddons]);
 
   // CÁLCULO PRECISO DO PREÇO UNITÁRIO
   const unitPrice = useMemo(() => {
@@ -197,10 +200,11 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
   ];
 
   const filteredAdditionals = useMemo(() => {
-    return ALL_ADDITIONALS.filter(a => a.category === activeCategory);
-  }, [activeCategory]);
+    return availableAddons.filter(a => a.category === activeCategory && a.isAvailable !== false);
+  }, [activeCategory, availableAddons]);
 
   const handleAddToCart = () => {
+    if (!isOpen) return;
     addToCart({
       product,
       selectedSize: hasSizes ? selectedSize : undefined,
@@ -250,7 +254,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
         {/* Corpo com Scroll */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
           
-          {/* 1. Escolha do Tamanho (Apenas se o produto tiver tamanhos) */}
+          {/* 1. Escolha do Tamanho */}
           {hasSizes && product.sizes && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -292,7 +296,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
             </div>
           )}
 
-          {/* 2. Escolha da Base (Apenas para açaí) */}
+          {/* 2. Escolha da Base */}
           {hasBases && product.bases && (
             <div className="space-y-3 pt-4 border-t border-[#ECE8F0]">
               <label className="text-xs font-semibold text-[#28242A] uppercase tracking-wider block">
@@ -337,7 +341,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
             </div>
           )}
 
-          {/* 3. Adicionais e Acompanhamentos (Se o produto permitir) */}
+          {/* 3. Adicionais e Acompanhamentos */}
           {product.allowsCustomization && (
             <div className="space-y-3 pt-4 border-t border-[#ECE8F0]">
               <div className="flex flex-wrap items-center justify-between gap-1">
@@ -444,15 +448,14 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
 
         </div>
 
-        {/* Rodapé Fixo com Preço Total e Botão */}
+        {/* Rodapé Fixo */}
         <div className="p-4 sm:p-5 border-t border-[#ECE8F0] bg-white flex items-center justify-between gap-4 shrink-0">
           
-          {/* Quantidade */}
           <div className="flex items-center gap-2 border border-[#ECE8F0] p-1.5 rounded-xl bg-[#FCFAF7]">
             <button
               type="button"
               onClick={() => setQuantity(Math.max(1, quantity - 1))}
-              disabled={quantity <= 1}
+              disabled={quantity <= 1 || !isOpen}
               className="p-1.5 rounded-lg text-[#726C74] hover:bg-white disabled:opacity-30 cursor-pointer"
             >
               <Minus className="w-4 h-4" />
@@ -461,21 +464,27 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, onClose }) 
             <button
               type="button"
               onClick={() => setQuantity(quantity + 1)}
-              className="p-1.5 rounded-lg text-[#726C74] hover:bg-white cursor-pointer"
+              disabled={!isOpen}
+              className="p-1.5 rounded-lg text-[#726C74] hover:bg-white disabled:opacity-30 cursor-pointer"
             >
               <Plus className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Botão Adicionar */}
-          <button
-            type="button"
-            onClick={handleAddToCart}
-            className="flex-1 h-12 bg-[#69318A] hover:bg-[#572185] active:scale-[0.99] text-white font-bold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-between px-5 cursor-pointer shadow-md"
-          >
-            <span>Adicionar à sacola</span>
-            <span className="font-extrabold">{formatCurrency(totalPrice)}</span>
-          </button>
+          {!isOpen ? (
+            <div className="flex-1 h-12 bg-amber-50 border border-amber-200 text-amber-900 font-bold text-xs sm:text-sm rounded-xl flex items-center justify-center">
+              Loja fechada no momento
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleAddToCart}
+              className="flex-1 h-12 bg-[#69318A] hover:bg-[#572185] active:scale-[0.99] text-white font-bold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-between px-5 cursor-pointer shadow-md"
+            >
+              <span>Adicionar à sacola</span>
+              <span className="font-extrabold">{formatCurrency(totalPrice)}</span>
+            </button>
+          )}
 
         </div>
 

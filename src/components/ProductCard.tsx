@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Product } from '../types';
 import { useCart } from '../contexts/CartContext';
+import { useStore } from '../contexts/StoreContext';
 import { formatCurrency } from '../utils/formatters';
 import { Plus } from 'lucide-react';
 
@@ -10,6 +11,7 @@ interface ProductCardProps {
 
 export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const { openProductModal, addToCart } = useCart();
+  const { isOpen } = useStore();
 
   const isCustomizable = product.allowsCustomization;
   const hasDiscount = product.promotionalPrice && product.promotionalPrice < product.price;
@@ -17,7 +19,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   const isStartingPrice = product.sizes && product.sizes.length > 1;
 
   const handleAction = () => {
-    if (!product.isAvailable) return;
+    if (!product.isAvailable || !isOpen) return;
     
     if (isCustomizable || (product.sizes && product.sizes.length > 0)) {
       openProductModal(product);
@@ -33,7 +35,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
 
   return (
     <div className={`bg-white rounded-2xl overflow-hidden border border-[#ECE8F0] shadow-xs hover:-translate-y-0.5 hover:shadow-sm transition-all duration-200 flex flex-col justify-between ${
-      !product.isAvailable ? 'opacity-60' : ''
+      !product.isAvailable || !isOpen ? 'opacity-70' : ''
     }`}>
       
       {/* Imagem com proporção uniforme */}
@@ -50,6 +52,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             <div className="absolute top-3 left-3">
               <span className="px-2.5 py-0.5 rounded-md bg-[#28242A]/85 backdrop-blur-xs text-white text-[11px] font-medium tracking-wide shadow-2xs">
                 {product.badge}
+              </span>
+            </div>
+          )}
+
+          {!product.isAvailable && (
+            <div className="absolute top-3 right-3">
+              <span className="px-2.5 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-bold shadow-2xs">
+                Esgotado
               </span>
             </div>
           )}
@@ -88,7 +98,15 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
             </div>
           </div>
 
-          {product.isAvailable ? (
+          {!isOpen ? (
+            <span className="text-xs text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg font-bold border border-amber-200">
+              Loja fechada
+            </span>
+          ) : !product.isAvailable ? (
+            <span className="text-xs text-red-600 bg-red-50 px-2.5 py-1 rounded-lg font-medium border border-red-100">
+              Esgotado
+            </span>
+          ) : (
             <button
               onClick={handleAction}
               className={`h-9 px-4 rounded-xl font-semibold text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs ${
@@ -100,8 +118,6 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
               <Plus className="w-3.5 h-3.5 stroke-[2]" />
               <span>{isCustomizable ? 'Montar' : 'Adicionar'}</span>
             </button>
-          ) : (
-            <span className="text-xs text-[#726C74] font-medium">Esgotado</span>
           )}
 
         </div>

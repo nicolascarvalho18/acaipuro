@@ -44,6 +44,15 @@ const OFFICIAL_CATALOG: Record<string, { basePrice: number; promoPrice?: number;
 };
 
 let memoryOrders: any[] = [];
+let memoryCustomers: any[] = [];
+
+function normalizePhone(phone: string): string {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.startsWith('55') && digits.length > 11) {
+    return digits.substring(2);
+  }
+  return digits;
+}
 
 function getSupabaseClient() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -129,7 +138,30 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      // 1. Recalcular e validar cada produto
+      const supabase = getSupabaseClient();
+
+      // 1. Validar se a loja está aberta no servidor
+      if (supabase) {
+        try {
+          const { data: storeSettings } = await supabase
+            .from('store_settings')
+            .select('is_open, paused_until')
+            .eq('id', 'default')
+            .single();
+
+          if (storeSettings && storeSettings.is_open === false) {
+            return res.status(400).json({
+              success: false,
+              code: 'STORE_CLOSED',
+              message: 'A loja está fechada e não está recebendo pedidos no momento.',
+            });
+          }
+        } catch (sErr) {
+          console.warn('[Store check warning]:', sErr);
+        }
+      }
+
+      // 2. Recalcular e validar cada produto
       let calculatedSubtotal = 0;
       const parsedItems = body.items.map((item: any) => {
         const qty = Math.max(1, Number(item.quantity) || 1);
@@ -139,7 +171,6 @@ export default async function handler(req: any, res: any) {
 
         let officialUnitPrice = Number(item.unitPrice) || 0;
 
-        // Validar no catálogo oficial se disponível
         const catalogItem = OFFICIAL_CATALOG[prodId] || Object.entries(OFFICIAL_CATALOG).find(([k, v]) => prodName.toLowerCase().includes(k.replace('prod_', '').replace('combo_', '').replace(/_/g, ' ')))?.[1];
 
         if (catalogItem) {
@@ -150,9 +181,7 @@ export default async function handler(req: any, res: any) {
           }
         }
 
-        // Se o cliente enviou adicionais extras pagos
         if (Array.isArray(item.additionals) && item.additionals.length > 0) {
-          // Mantém valor unitário calculado se maior
           if (Number(item.unitPrice) > officialUnitPrice) {
             officialUnitPrice = Number(item.unitPrice);
           }
@@ -176,7 +205,6 @@ export default async function handler(req: any, res: any) {
 
       const fulfillmentType = (body.fulfillmentType === 'pickup' || body.deliveryType === 'pickup') ? 'pickup' : 'delivery';
       
-      // Frete grátis a partir de R$ 45,00
       let deliveryFee = 0;
       if (fulfillmentType === 'delivery') {
         deliveryFee = calculatedSubtotal >= 45.00 ? 0.00 : (Number(body.deliveryFee) || 5.00);
@@ -185,11 +213,13 @@ export default async function handler(req: any, res: any) {
       const total = Number((calculatedSubtotal + deliveryFee).toFixed(2));
       const orderNumber = body.orderNumber || `PED-${Math.floor(1000 + Math.random() * 9000)}`;
       const now = new Date().toISOString();
+      const rawPhone = body.customerPhone ? String(body.customerPhone).trim() : null;
+      const normalized = rawPhone ? normalizePhone(rawPhone) : null;
 
       const orderData = {
         order_number: orderNumber,
         customer_name: String(body.customerName).trim(),
-        customer_phone: body.customerPhone ? String(body.customerPhone).trim() : null,
+        customer_phone: rawPhone,
         fulfillment_type: fulfillmentType,
         street: body.street || body.address?.street || null,
         number: body.number || body.address?.number || null,
@@ -206,7 +236,43 @@ export default async function handler(req: any, res: any) {
         updated_at: now,
       };
 
-      const supabase = getSupabaseClient();
+      // 3. Cadastrar ou Atualizar Cliente Automaticamente
+      if (supabase && normalized) {
+        try {
+          const { data: existingCustomer } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('phone', normalized)
+            .single();
+
+          if (existingCustomer) {
+            await supabase
+              .from('customers')
+              .update({
+                name: orderData.customer_name,
+                total_orders: (existingCustomer.total_orders || 0) + 1,
+                total_spent: Number((Number(existingCustomer.total_spent || 0) + total).toFixed(2)),
+                last_order_at: now,
+                updated_at: now,
+              })
+              .eq('id', existingCustomer.id);
+          } else {
+            await supabase
+              .from('customers')
+              .insert({
+                name: orderData.customer_name,
+                phone: normalized,
+                total_orders: 1,
+                total_spent: total,
+                last_order_at: now,
+              });
+          }
+        } catch (cErr) {
+          console.warn('[Customer auto-registration warning]:', cErr);
+        }
+      }
+
+      // 4. Salvar Pedido no Supabase
       if (supabase) {
         try {
           const { data, error } = await supabase

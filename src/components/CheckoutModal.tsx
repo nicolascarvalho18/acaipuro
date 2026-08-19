@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useCart } from '../contexts/CartContext';
+import { useStore } from '../contexts/StoreContext';
 import { STORE_CONFIG } from '../config/storeConfig';
 import { supabase, isSupabaseConfigured } from '../services/supabaseClient';
 import { 
@@ -31,6 +32,8 @@ export const CheckoutModal: React.FC = () => {
     clearCart 
   } = useCart();
 
+  const { isOpen, storeSettings, deliveryZones } = useStore();
+
   // Dados do Formulário
   const [deliveryType, setDeliveryType] = useState<FulfillmentType>('delivery');
   const [customerName, setCustomerName] = useState('');
@@ -59,6 +62,11 @@ export const CheckoutModal: React.FC = () => {
   if (!isCheckoutOpen) return null;
 
   const validateForm = (): boolean => {
+    if (!isOpen) {
+      setErrorMessage('A loja está fechada no momento e não pode receber pedidos.');
+      return false;
+    }
+
     const errors: Record<string, string> = {};
 
     if (!customerName.trim()) {
@@ -72,7 +80,7 @@ export const CheckoutModal: React.FC = () => {
     if (deliveryType === 'delivery') {
       if (!street.trim()) errors.street = 'Informe o nome da rua/avenida.';
       if (!number.trim()) errors.number = 'Informe o número.';
-      if (!neighborhood.trim()) errors.neighborhood = 'Informe o bairro.';
+      if (!neighborhood.trim()) errors.neighborhood = 'Informe ou selecione o bairro.';
     }
 
     if (paymentMethod === 'delivery' && deliveryPaymentMethod === 'cash' && needsChange) {
@@ -106,6 +114,7 @@ export const CheckoutModal: React.FC = () => {
       paymentMethod,
       notes: generalNotes.trim() || undefined,
       items: cart.map(item => ({
+        productId: item.product.id,
         name: item.product.name,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
@@ -123,7 +132,6 @@ export const CheckoutModal: React.FC = () => {
     let orderSavedSuccessfully = false;
     let finalOrderNumber = orderNumber;
 
-    // 1. Tentar salvar via API do backend
     try {
       const res = await fetch('/api/orders', {
         method: 'POST',
@@ -142,12 +150,20 @@ export const CheckoutModal: React.FC = () => {
       if (res.ok && data && data.success) {
         orderSavedSuccessfully = true;
         finalOrderNumber = data.orderNumber || orderNumber;
+      } else if (data && data.code === 'STORE_CLOSED') {
+        setErrorMessage(data.message || 'A loja está fechada e não está recebendo pedidos.');
+        setIsSubmitting(false);
+        return;
+      } else if (data && data.error) {
+        setErrorMessage(data.error);
+        setIsSubmitting(false);
+        return;
       }
     } catch (apiErr) {
       console.warn('API /orders error:', apiErr);
     }
 
-    // 2. Se a API falhou e Supabase estiver configurado no frontend, salvar direto no Supabase
+    // 2. Se a API falhou e Supabase estiver configurado no frontend
     if (!orderSavedSuccessfully && isSupabaseConfigured() && supabase) {
       try {
         const { data: supaData, error: supaErr } = await supabase
@@ -181,12 +197,11 @@ export const CheckoutModal: React.FC = () => {
       }
     }
 
-    // 3. Resultado do processamento
     if (orderSavedSuccessfully) {
       setCompletedOrder({ ...orderPayload, orderId: finalOrderNumber });
       clearCart();
-    } else {
-      setErrorMessage('Não foi possível enviar seu pedido no momento. Verifique sua conexão e tente novamente.');
+    } else if (!errorMessage) {
+      setErrorMessage('Não foi possível enviar seu pedido. Verifique sua conexão e tente novamente.');
     }
 
     setIsSubmitting(false);
@@ -223,6 +238,14 @@ export const CheckoutModal: React.FC = () => {
             <X className="w-5 h-5 stroke-[1.8]" />
           </button>
         </div>
+
+        {/* Aviso de Loja Fechada */}
+        {!isOpen && !completedOrder && (
+          <div className="p-3 bg-red-50 border-b border-red-200 text-red-800 text-xs font-bold flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-red-600" />
+            <span>Estamos fechados no momento. {storeSettings.openingHoursText}</span>
+          </div>
+        )}
 
         {/* TELA DE CONFIRMAÇÃO REAL DO CLIENTE */}
         {completedOrder ? (
@@ -274,7 +297,7 @@ export const CheckoutModal: React.FC = () => {
 
               <div className="flex items-center gap-1.5 pt-1">
                 <Clock className="w-3.5 h-3.5 text-[#69318A]" />
-                <span><strong>Tempo estimado:</strong> {STORE_CONFIG.delivery.estimatedTime}</span>
+                <span><strong>Tempo estimado:</strong> {storeSettings.estimatedDeliveryTime || STORE_CONFIG.delivery.estimatedTime}</span>
               </div>
 
               <div className="flex justify-between items-center pt-2 border-t border-[#ECE8F0] font-['DM_Sans']">
@@ -436,15 +459,30 @@ export const CheckoutModal: React.FC = () => {
                     <label className="block text-xs text-[#726C74] mb-1">
                       Bairro <span className="text-red-500">*</span>
                     </label>
-                    <input
-                      type="text"
-                      placeholder="Ex: Gonzaga"
-                      value={neighborhood}
-                      onChange={(e) => setNeighborhood(e.target.value)}
-                      className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none ${
-                        formErrors.neighborhood ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
-                      }`}
-                    />
+                    {deliveryZones && deliveryZones.length > 0 ? (
+                      <select
+                        value={neighborhood}
+                        onChange={(e) => setNeighborhood(e.target.value)}
+                        className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none ${
+                          formErrors.neighborhood ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
+                        }`}
+                      >
+                        <option value="">Selecione seu bairro...</option>
+                        {deliveryZones.map(z => (
+                          <option key={z.id} value={z.neighborhood}>{z.neighborhood} ({formatCurrency(z.fee)})</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder="Ex: Gonzaga"
+                        value={neighborhood}
+                        onChange={(e) => setNeighborhood(e.target.value)}
+                        className={`w-full p-2.5 bg-white border rounded-xl text-xs sm:text-sm text-[#28242A] outline-none ${
+                          formErrors.neighborhood ? 'border-red-400' : 'border-[#ECE8F0] focus:border-[#69318A]'
+                        }`}
+                      />
+                    )}
                   </div>
 
                   <div>
@@ -549,24 +587,34 @@ export const CheckoutModal: React.FC = () => {
         {/* Botão de Finalização */}
         {!completedOrder && (
           <div className="p-4 sm:p-5 bg-white border-t border-[#ECE8F0] shrink-0">
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleFinishOrder}
-              className="w-full h-12 px-5 bg-[#69318A] hover:bg-[#572185] active:scale-[0.99] disabled:opacity-60 text-white font-bold text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
-            >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Enviando pedido para a loja...</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-4 h-4 stroke-[2]" />
-                  <span>Confirmar pedido ({formatCurrency(total)})</span>
-                </>
-              )}
-            </button>
+            {!isOpen ? (
+              <button
+                type="button"
+                disabled
+                className="w-full h-12 px-5 bg-gray-200 text-gray-500 font-bold text-sm rounded-xl cursor-not-allowed flex items-center justify-center"
+              >
+                Pedidos temporariamente indisponíveis (Loja fechada)
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={handleFinishOrder}
+                className="w-full h-12 px-5 bg-[#69318A] hover:bg-[#572185] active:scale-[0.99] disabled:opacity-60 text-white font-bold text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
+              >
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Enviando pedido para a loja...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 stroke-[2]" />
+                    <span>Confirmar pedido ({formatCurrency(total)})</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         )}
 
