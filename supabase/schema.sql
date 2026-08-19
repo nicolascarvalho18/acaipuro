@@ -1,59 +1,64 @@
 -- ==============================================================================
--- TABELA DE PEDIDOS - AÇAÍ PURO SABOR
+-- TABELA DE PEDIDOS EM TEMPO REAL - AÇAÍ PURO SABOR
 -- ==============================================================================
--- Execute este script no SQL Editor do seu projeto no Supabase (https://supabase.com)
+-- Execute este script no SQL Editor do seu projeto Supabase (https://supabase.com)
 
 CREATE TABLE IF NOT EXISTS public.orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_number TEXT UNIQUE NOT NULL,
     customer_name TEXT NOT NULL,
     customer_phone TEXT,
-    delivery_type TEXT NOT NULL CHECK (delivery_type IN ('delivery', 'pickup')),
+    fulfillment_type TEXT NOT NULL CHECK (fulfillment_type IN ('delivery', 'pickup')),
     
-    -- Endereço de Entrega
-    address_street TEXT,
-    address_number TEXT,
-    address_neighborhood TEXT,
-    address_complement TEXT,
-    address_reference TEXT,
+    -- Endereço estruturado (JSONB)
+    address JSONB DEFAULT '{}'::jsonb,
     
-    -- Itens e Personalizações (Armazenados em JSON estruturado)
+    -- Itens e personalizações completos (JSONB)
     items JSONB NOT NULL DEFAULT '[]'::jsonb,
     
-    -- Valores
+    -- Valores financeiros
     subtotal NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     delivery_fee NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
-    discount NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     total NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     
     -- Pagamento
     payment_method TEXT NOT NULL CHECK (payment_method IN ('pix', 'card_online', 'delivery')),
-    delivery_payment_method TEXT CHECK (delivery_payment_method IN ('cash', 'card_delivery')),
-    card_type TEXT CHECK (card_type IN ('credit', 'debit')),
-    change_for NUMERIC(10, 2),
     payment_status TEXT NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'approved', 'paid_on_delivery', 'rejected')),
-    payment_id TEXT,
     
-    -- Status do Pedido
-    order_status TEXT NOT NULL DEFAULT 'novo' CHECK (order_status IN ('novo', 'confirmado', 'em_preparo', 'saiu_para_entrega', 'entregue', 'cancelado')),
+    -- Status do pedido (exatamente os 7 status solicitados)
+    order_status TEXT NOT NULL DEFAULT 'new' CHECK (order_status IN ('new', 'confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered', 'cancelled')),
     
-    -- Observações e Metadados
-    general_notes TEXT,
-    whatsapp_notification_status TEXT NOT NULL DEFAULT 'pending' CHECK (whatsapp_notification_status IN ('sent', 'failed', 'pending', 'not_configured')),
-    whatsapp_error_message TEXT,
+    -- Observações do cliente
+    notes TEXT,
     
-    -- Timestamps
+    -- Notificações em segundo plano
+    whatsapp_status TEXT NOT NULL DEFAULT 'pending' CHECK (whatsapp_status IN ('pending', 'sent', 'failed', 'not_configured')),
+    push_status TEXT NOT NULL DEFAULT 'pending' CHECK (push_status IN ('pending', 'sent', 'failed', 'not_configured')),
+    email_status TEXT NOT NULL DEFAULT 'pending' CHECK (email_status IN ('pending', 'sent', 'failed', 'not_configured')),
+    notification_attempts INTEGER NOT NULL DEFAULT 0,
+    last_notification_error TEXT,
+    
+    -- Horários
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    confirmed_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Índices para consultas rápidas
+-- Tabela de Inscrições Push Web para o lojista
+CREATE TABLE IF NOT EXISTS public.push_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    endpoint TEXT UNIQUE NOT NULL,
+    keys JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Índices de alta performance
 CREATE INDEX IF NOT EXISTS idx_orders_order_number ON public.orders(order_number);
 CREATE INDEX IF NOT EXISTS idx_orders_order_status ON public.orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON public.orders(created_at DESC);
 
--- Trigger para atualizar o campo updated_at automaticamente
-CREATE OR REPLACE FUNCTION update_updated_at_column()
+-- Trigger de atualização de timestamp
+CREATE OR REPLACE FUNCTION update_orders_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = NOW();
@@ -61,24 +66,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS set_orders_updated_at ON public.orders;
-CREATE TRIGGER set_orders_updated_at
+DROP TRIGGER IF EXISTS trg_orders_updated_at ON public.orders;
+CREATE TRIGGER trg_orders_updated_at
 BEFORE UPDATE ON public.orders
 FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
+EXECUTE FUNCTION update_orders_updated_at();
 
--- Habilitar Row Level Security (RLS)
+-- HABILITAR SUPABASE REALTIME NA TABELA DE PEDIDOS
+-- Isso permite que o painel do lojista receba pedidos instantaneamente sem polling
+ALTER PUBLICATION supabase_realtime ADD TABLE public.orders;
+
+-- RLS (Row Level Security)
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.push_subscriptions ENABLE ROW LEVEL SECURITY;
 
--- Política de Leitura e Inserção para Serverless Functions (com chave de serviço ou anon com backend)
-CREATE POLICY "Permitir inserção de pedidos via API"
-ON public.orders FOR INSERT
-WITH CHECK (true);
+CREATE POLICY "Permitir inserção de pedidos" ON public.orders FOR INSERT WITH CHECK (true);
+CREATE POLICY "Permitir leitura de pedidos" ON public.orders FOR SELECT USING (true);
+CREATE POLICY "Permitir atualização de status de pedidos" ON public.orders FOR UPDATE USING (true);
 
-CREATE POLICY "Permitir leitura de pedidos via API"
-ON public.orders FOR SELECT
-USING (true);
-
-CREATE POLICY "Permitir atualização de status via API"
-ON public.orders FOR UPDATE
-USING (true);
+CREATE POLICY "Permitir gerenciar push subscriptions" ON public.push_subscriptions FOR ALL USING (true);

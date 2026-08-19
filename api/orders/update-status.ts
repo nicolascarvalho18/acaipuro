@@ -2,12 +2,13 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { updateOrderStatus, DbOrder } from '../_services/db';
 
 const VALID_STATUSES: DbOrder['order_status'][] = [
-  'novo',
-  'confirmado',
-  'em_preparo',
-  'saiu_para_entrega',
-  'entregue',
-  'cancelado',
+  'new',
+  'confirmed',
+  'preparing',
+  'ready',
+  'out_for_delivery',
+  'delivered',
+  'cancelled',
 ];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -46,7 +47,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (!VALID_STATUSES.includes(status)) {
-      return res.status(400).json({ error: `Status inválido. Use um dos seguintes: ${VALID_STATUSES.join(', ')}` });
+      return res.status(400).json({ error: `Status inválido. Use: ${VALID_STATUSES.join(', ')}` });
     }
 
     const updated = await updateOrderStatus(orderId, status);

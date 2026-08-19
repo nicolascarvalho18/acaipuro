@@ -18,7 +18,8 @@ import {
   Send, 
   CheckCircle2,
   AlertCircle,
-  Clock
+  Clock,
+  Loader2
 } from 'lucide-react';
 
 export const CheckoutModal: React.FC = () => {
@@ -101,7 +102,7 @@ export const CheckoutModal: React.FC = () => {
     setErrorMessage(null);
 
     const orderId = generateOrderId();
-    const orderNumber = String(Math.floor(1000 + Math.random() * 9000));
+    const orderNumber = `PED-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const order: OrderDetails = {
       orderId,
@@ -127,28 +128,21 @@ export const CheckoutModal: React.FC = () => {
       deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
       discount: 0,
       total,
-      status: paymentMethod === 'delivery' ? 'delivery' : 'awaiting_payment',
+      status: 'awaiting_payment',
       createdAt: new Date().toISOString()
     };
 
-    // Gera o link direto e imediato do WhatsApp da loja
-    const whatsappUrl = getWhatsAppUrl(order, STORE_CONFIG);
-
-    // 1. REGISTRO EM SEGUNDO PLANO (NÃO TRAVA A INTERFACE NEM O CLIENTE)
-    fetch('/api/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    try {
+      // 1. SALVAR NO BANCO DE DADOS (SUPABASE / BACKEND) EM < 1 SEGUNDO
+      const orderPayload = {
         orderNumber,
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim() || undefined,
-        deliveryType,
+        fulfillmentType: deliveryType,
         address: order.address,
         paymentMethod,
-        deliveryPaymentMethod: order.deliveryPaymentMethod,
-        cardType: order.cardType,
-        changeFor: order.changeFor,
-        generalNotes: order.generalNotes,
+        paymentStatus: paymentMethod === 'delivery' ? 'paid_on_delivery' : 'pending',
+        notes: generalNotes.trim() || undefined,
         items: cart.map(item => ({
           name: item.product.name,
           quantity: item.quantity,
@@ -162,17 +156,68 @@ export const CheckoutModal: React.FC = () => {
         subtotal,
         deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
         total,
-      }),
-    }).catch(e => console.warn('Background save:', e));
+      };
 
-    // 2. DISPARO INSTANTÂNEO DO PEDIDO
-    // Abre o WhatsApp imediatamente para o lojista receber na hora sem demora
-    window.open(whatsappUrl, '_blank');
+      const res = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderPayload),
+      });
 
-    // Atualiza o estado da tela para confirmação instantânea
-    setCompletedOrder({ ...order, orderId: orderNumber });
-    clearCart();
-    setIsSubmitting(false);
+      const data = await res.json();
+
+      if (!res.ok && !data.success) {
+        throw new Error(data.error || 'Erro ao registrar pedido no servidor.');
+      }
+
+      const confirmedNumber = data.orderNumber || orderNumber;
+
+      // 2. SE FOR PAGAMENTO ONLINE COM MERCADO PAGO
+      if (paymentMethod === 'pix' || paymentMethod === 'card_online') {
+        try {
+          const prefRes = await fetch('/api/payments/create-preference', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              orderId: confirmedNumber,
+              customerName: customerName.trim(),
+              customerPhone: customerPhone.trim() || undefined,
+              deliveryType,
+              address: order.address,
+              paymentType: paymentMethod,
+              items: orderPayload.items,
+              subtotal,
+              deliveryFee: orderPayload.deliveryFee,
+              total,
+            }),
+          });
+
+          const prefData = await prefRes.json();
+
+          if (prefData.success && (prefData.initPoint || prefData.sandboxInitPoint)) {
+            sessionStorage.setItem(`order_${confirmedNumber}`, JSON.stringify(order));
+            window.location.href = prefData.initPoint || prefData.sandboxInitPoint;
+            return;
+          }
+        } catch (prefErr) {
+          console.warn('Mercado Pago preference error, displaying order confirmation screen:', prefErr);
+        }
+      }
+
+      // 3. EXIBE A TELA DE CONFIRMAÇÃO DO CLIENTE IMEDIATAMENTE
+      setCompletedOrder({ ...order, orderId: confirmedNumber });
+      clearCart();
+      setIsSubmitting(false);
+
+    } catch (err: any) {
+      console.error('Order creation error:', err);
+      // Fallback: garante que o cliente não fique travado
+      const whatsappUrl = getWhatsAppUrl(order, STORE_CONFIG);
+      window.open(whatsappUrl, '_blank');
+      setCompletedOrder({ ...order, orderId: orderNumber });
+      clearCart();
+      setIsSubmitting(false);
+    }
   };
 
   const handleCloseAll = () => {
@@ -191,10 +236,10 @@ export const CheckoutModal: React.FC = () => {
         <div className="p-4 sm:p-5 border-b border-[#ECE8F0] flex items-center justify-between bg-white shrink-0">
           <div>
             <h2 className="text-base font-bold text-[#28242A] font-['DM_Sans']">
-              {completedOrder ? 'Pedido Enviado' : 'Finalizar Pedido'}
+              {completedOrder ? 'Pedido Confirmado' : 'Finalizar Pedido'}
             </h2>
             <p className="text-xs text-[#726C74] mt-0.5">
-              {completedOrder ? 'Pedido enviado diretamente para o WhatsApp da loja' : 'Preencha seus dados para entrega rápida'}
+              {completedOrder ? 'Registrado e enviado em tempo real ao lojista' : 'Preencha seus dados para entrega rápida'}
             </p>
           </div>
 
@@ -207,7 +252,7 @@ export const CheckoutModal: React.FC = () => {
           </button>
         </div>
 
-        {/* TELA DE CONFIRMAÇÃO INSTANTÂNEA */}
+        {/* TELA DE CONFIRMAÇÃO DO CLIENTE */}
         {completedOrder ? (
           <div className="p-6 text-center space-y-5 overflow-y-auto">
             <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-100 shadow-2xs">
@@ -216,10 +261,10 @@ export const CheckoutModal: React.FC = () => {
 
             <div className="space-y-1">
               <h3 className="text-xl font-bold text-[#28242A] font-['DM_Sans']">
-                Pedido enviado com sucesso!
+                Pedido recebido!
               </h3>
               <p className="text-xs sm:text-sm text-[#726C74]">
-                A mensagem do pedido foi enviada diretamente para o WhatsApp da loja <strong>(13) 99150-9733</strong>.
+                Seu pedido foi registrado no sistema e já apareceu no painel em tempo real da açaiteria.
               </p>
             </div>
 
@@ -229,7 +274,7 @@ export const CheckoutModal: React.FC = () => {
                 <span className="font-extrabold text-sm text-[#28242A] font-['DM_Sans']">#{completedOrder.orderId}</span>
               </div>
               <p><strong>Cliente:</strong> {completedOrder.customerName}</p>
-              <p><strong>Tipo:</strong> {completedOrder.deliveryType === 'delivery' ? '🛵 Entrega' : '🏪 Retirada na loja'}</p>
+              <p><strong>Tipo:</strong> {completedOrder.deliveryType === 'delivery' ? '🛵 Entrega' : '🏪 Retirada no balcão'}</p>
               {completedOrder.deliveryType === 'delivery' && completedOrder.address && (
                 <p><strong>Endereço:</strong> {completedOrder.address.street}, Nº {completedOrder.address.number} - {completedOrder.address.neighborhood}</p>
               )}
@@ -248,10 +293,10 @@ export const CheckoutModal: React.FC = () => {
                 href={getWhatsAppUrl(completedOrder, STORE_CONFIG)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full h-11 bg-[#69318A] hover:bg-[#572185] text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                className="w-full h-11 bg-white hover:bg-[#F3EDF6] text-[#69318A] border border-[#ECE8F0] text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
               >
                 <Send className="w-4 h-4 stroke-[1.8]" />
-                <span>Abrir conversa no WhatsApp</span>
+                <span>Acompanhar pelo WhatsApp (Opcional)</span>
               </a>
 
               <button
@@ -625,17 +670,26 @@ export const CheckoutModal: React.FC = () => {
           </div>
         )}
 
-        {/* Botão de Envio Instantâneo */}
+        {/* Botão de Finalização */}
         {!completedOrder && (
           <div className="p-4 sm:p-5 bg-white border-t border-[#ECE8F0] shrink-0">
             <button
               type="button"
               disabled={isSubmitting}
               onClick={handleFinishOrder}
-              className="w-full h-12 px-5 bg-[#69318A] hover:bg-[#572185] active:scale-[0.99] text-white font-bold text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
+              className="w-full h-12 px-5 bg-[#69318A] hover:bg-[#572185] active:scale-[0.99] disabled:opacity-60 text-white font-bold text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
             >
-              <Send className="w-4 h-4 stroke-[2]" />
-              <span>Enviar pedido agora ({formatCurrency(total)})</span>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Salvando pedido...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4 stroke-[2]" />
+                  <span>Confirmar pedido ({formatCurrency(total)})</span>
+                </>
+              )}
             </button>
           </div>
         )}

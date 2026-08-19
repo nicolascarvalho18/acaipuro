@@ -50,9 +50,10 @@ const MainContent: React.FC = () => {
   useEffect(() => {
     loadCatalog();
 
-    // Abrir painel se a URL tiver ?admin=true
+    // Abrir painel se a URL for /admin/pedidos, /admin ou tiver ?admin=true
+    const path = window.location.pathname.toLowerCase();
     const params = new URLSearchParams(window.location.search);
-    if (params.get('admin') === 'true' || params.get('admin') === '1') {
+    if (path.includes('/admin') || params.get('admin') === 'true' || params.get('admin') === '1') {
       setIsAdminOpen(true);
     }
   }, []);

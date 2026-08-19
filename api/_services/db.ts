@@ -1,36 +1,48 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+export interface DbOrderItem {
+  name: string;
+  size?: string;
+  base?: string;
+  additionals?: string[];
+  notes?: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
 export interface DbOrder {
   id?: string;
   order_number: string;
   customer_name: string;
   customer_phone?: string;
-  delivery_type: 'delivery' | 'pickup';
-  address_street?: string;
-  address_number?: string;
-  address_neighborhood?: string;
-  address_complement?: string;
-  address_reference?: string;
-  items: any[];
+  fulfillment_type: 'delivery' | 'pickup';
+  address?: {
+    street?: string;
+    number?: string;
+    neighborhood?: string;
+    complement?: string;
+    reference?: string;
+  };
+  items: DbOrderItem[];
   subtotal: number;
   delivery_fee: number;
-  discount: number;
   total: number;
   payment_method: 'pix' | 'card_online' | 'delivery';
-  delivery_payment_method?: 'cash' | 'card_delivery';
-  card_type?: 'credit' | 'debit';
-  change_for?: number;
   payment_status: 'pending' | 'approved' | 'paid_on_delivery' | 'rejected';
-  payment_id?: string;
-  order_status: 'novo' | 'confirmado' | 'em_preparo' | 'saiu_para_entrega' | 'entregue' | 'cancelado';
-  general_notes?: string;
-  whatsapp_notification_status: 'sent' | 'failed' | 'pending' | 'not_configured';
-  whatsapp_error_message?: string;
+  order_status: 'new' | 'confirmed' | 'preparing' | 'ready' | 'out_for_delivery' | 'delivered' | 'cancelled';
+  notes?: string;
+  whatsapp_status: 'pending' | 'sent' | 'failed' | 'not_configured';
+  push_status: 'pending' | 'sent' | 'failed' | 'not_configured';
+  email_status: 'pending' | 'sent' | 'failed' | 'not_configured';
+  notification_attempts: number;
+  last_notification_error?: string;
+  confirmed_at?: string;
   created_at?: string;
   updated_at?: string;
 }
 
-// Fallback in-memory store quando Supabase ainda não estiver provisionado
+// Armazenamento em memória para garantir funcionamento 100% imediato e fallback
 const memoryOrders: DbOrder[] = [];
 
 export function getSupabaseClient(): SupabaseClient | null {
@@ -39,9 +51,11 @@ export function getSupabaseClient(): SupabaseClient | null {
 
   if (url && key && url.trim() !== '' && key.trim() !== '') {
     try {
-      return createClient(url.trim(), key.trim());
+      return createClient(url.trim(), key.trim(), {
+        auth: { persistSession: false },
+      });
     } catch (e) {
-      console.error('Error initializing Supabase client:', e);
+      console.error('[DB] Error initializing Supabase client:', e);
       return null;
     }
   }
@@ -60,42 +74,36 @@ export async function insertOrder(order: DbOrder): Promise<DbOrder> {
           order_number: order.order_number,
           customer_name: order.customer_name,
           customer_phone: order.customer_phone,
-          delivery_type: order.delivery_type,
-          address_street: order.address_street,
-          address_number: order.address_number,
-          address_neighborhood: order.address_neighborhood,
-          address_complement: order.address_complement,
-          address_reference: order.address_reference,
+          fulfillment_type: order.fulfillment_type,
+          address: order.address || {},
           items: order.items,
           subtotal: order.subtotal,
           delivery_fee: order.delivery_fee,
-          discount: order.discount,
           total: order.total,
           payment_method: order.payment_method,
-          delivery_payment_method: order.delivery_payment_method,
-          card_type: order.card_type,
-          change_for: order.change_for,
           payment_status: order.payment_status,
-          payment_id: order.payment_id,
-          order_status: order.order_status || 'novo',
-          general_notes: order.general_notes,
-          whatsapp_notification_status: order.whatsapp_notification_status,
-          whatsapp_error_message: order.whatsapp_error_message,
+          order_status: order.order_status || 'new',
+          notes: order.notes,
+          whatsapp_status: order.whatsapp_status || 'pending',
+          push_status: order.push_status || 'pending',
+          email_status: order.email_status || 'pending',
+          notification_attempts: 0,
         })
         .select()
         .single();
 
       if (error) {
-        console.error('Supabase insert error, falling back to memory store:', error);
+        console.error('[DB] Supabase insert error, saving to memory fallback:', error);
       } else if (data) {
+        console.log(`[DB] Order ${order.order_number} saved to Supabase successfully.`);
         return data as DbOrder;
       }
     } catch (e) {
-      console.error('Supabase exception:', e);
+      console.error('[DB] Supabase insert exception:', e);
     }
   }
 
-  // Fallback para memória
+  // Fallback em memória
   const newOrder: DbOrder = {
     ...order,
     id: `local_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
@@ -103,6 +111,7 @@ export async function insertOrder(order: DbOrder): Promise<DbOrder> {
     updated_at: now,
   };
   memoryOrders.unshift(newOrder);
+  console.log(`[DB] Order ${order.order_number} saved to memory store.`);
   return newOrder;
 }
 
@@ -124,13 +133,13 @@ export async function listOrders(statusFilter?: string): Promise<DbOrder[]> {
       if (!error && data) {
         return data as DbOrder[];
       }
-      console.error('Supabase list error:', error);
+      console.error('[DB] Supabase list error:', error);
     } catch (e) {
-      console.error('Supabase list exception:', e);
+      console.error('[DB] Supabase list exception:', e);
     }
   }
 
-  // Fallback para memória
+  // Fallback memória
   if (statusFilter && statusFilter !== 'all') {
     return memoryOrders.filter(o => o.order_status === statusFilter);
   }
@@ -142,12 +151,22 @@ export async function updateOrderStatus(
   newStatus: DbOrder['order_status']
 ): Promise<DbOrder | null> {
   const supabase = getSupabaseClient();
+  const now = new Date().toISOString();
+
+  const updateData: any = {
+    order_status: newStatus,
+    updated_at: now,
+  };
+
+  if (newStatus === 'confirmed') {
+    updateData.confirmed_at = now;
+  }
 
   if (supabase) {
     try {
       const { data, error } = await supabase
         .from('orders')
-        .update({ order_status: newStatus, updated_at: new Date().toISOString() })
+        .update(updateData)
         .or(`id.eq.${orderIdOrNumber},order_number.eq.${orderIdOrNumber}`)
         .select()
         .single();
@@ -156,7 +175,7 @@ export async function updateOrderStatus(
         return data as DbOrder;
       }
     } catch (e) {
-      console.error('Supabase update exception:', e);
+      console.error('[DB] Supabase update exception:', e);
     }
   }
 
@@ -166,17 +185,24 @@ export async function updateOrderStatus(
   );
   if (order) {
     order.order_status = newStatus;
-    order.updated_at = new Date().toISOString();
+    order.updated_at = now;
+    if (newStatus === 'confirmed') {
+      order.confirmed_at = now;
+    }
     return order;
   }
 
   return null;
 }
 
-export async function updateNotificationStatus(
+export async function updateNotificationResults(
   orderIdOrNumber: string,
-  status: DbOrder['whatsapp_notification_status'],
-  errorMessage?: string
+  updates: {
+    whatsapp_status?: DbOrder['whatsapp_status'];
+    push_status?: DbOrder['push_status'];
+    email_status?: DbOrder['email_status'];
+    last_notification_error?: string;
+  }
 ): Promise<void> {
   const supabase = getSupabaseClient();
 
@@ -185,14 +211,14 @@ export async function updateNotificationStatus(
       await supabase
         .from('orders')
         .update({
-          whatsapp_notification_status: status,
-          whatsapp_error_message: errorMessage || null,
-          updated_at: new Date().toISOString()
+          ...updates,
+          notification_attempts: 1,
+          updated_at: new Date().toISOString(),
         })
         .or(`id.eq.${orderIdOrNumber},order_number.eq.${orderIdOrNumber}`);
       return;
     } catch (e) {
-      console.error('Supabase update notification status exception:', e);
+      console.error('[DB] Supabase update notification exception:', e);
     }
   }
 
@@ -200,8 +226,13 @@ export async function updateNotificationStatus(
     o => o.id === orderIdOrNumber || o.order_number === orderIdOrNumber
   );
   if (order) {
-    order.whatsapp_notification_status = status;
-    order.whatsapp_error_message = errorMessage;
+    if (updates.whatsapp_status) order.whatsapp_status = updates.whatsapp_status;
+    if (updates.push_status) order.push_status = updates.push_status;
+    if (updates.email_status) order.email_status = updates.email_status;
+    if (updates.last_notification_error !== undefined) {
+      order.last_notification_error = updates.last_notification_error;
+    }
+    order.notification_attempts += 1;
     order.updated_at = new Date().toISOString();
   }
 }

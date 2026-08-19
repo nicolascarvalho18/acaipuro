@@ -1,13 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { waitUntil } from '@vercel/functions';
 import { insertOrder, listOrders, DbOrder } from '../_services/db';
-import { sendWhatsAppNotification } from '../_services/whatsapp';
+import { dispatchAllBackgroundNotifications } from '../_services/notifications';
 
-function generateShortOrderNumber(): string {
+function generateOrderNumber(): string {
   const now = new Date();
-  const hours = String(now.getHours()).padStart(2, '0');
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  const randomSuffix = Math.floor(100 + Math.random() * 900);
-  return `${hours}${minutes}${randomSuffix}`;
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+  return `PED-${year}${month}${day}-${randomSuffix}`;
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -24,12 +26,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
-  // GET: Listar pedidos (Painel Administrativo)
+  // GET: Listar pedidos para o Painel Administrativo do Lojista
   if (req.method === 'GET') {
     const authHeader = req.headers.authorization;
     const adminPassword = process.env.ADMIN_PASSWORD || process.env.ADMIN_SECRET_KEY || 'acai123';
 
-    // Se fornecido header de autenticação, valida
     if (authHeader) {
       const token = authHeader.replace('Bearer ', '').trim();
       if (token !== adminPassword) {
@@ -46,16 +47,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // POST: Registrar novo pedido
+  // POST: Registrar novo pedido no banco de dados e notificar em segundo plano
   if (req.method === 'POST') {
+    const startTime = Date.now();
     try {
       const body = req.body;
 
       if (!body || !body.customerName || !body.items || !Array.isArray(body.items) || body.items.length === 0) {
-        return res.status(400).json({ error: 'Dados do pedido incompletos.' });
+        return res.status(400).json({ error: 'Dados do pedido incompletos ou carrinho vazio.' });
       }
 
-      // Recalcular e validar valores no servidor
+      // 1. Recalcular e validar valores no servidor
       let calculatedSubtotal = 0;
       const parsedItems = body.items.map((item: any) => {
         const qty = Number(item.quantity) || 1;
@@ -75,62 +77,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
       });
 
-      const deliveryType = body.deliveryType === 'pickup' ? 'pickup' : 'delivery';
-      const deliveryFee = deliveryType === 'delivery' ? (Number(body.deliveryFee) || 5.0) : 0.0;
+      const fulfillmentType = body.fulfillmentType === 'pickup' || body.deliveryType === 'pickup' ? 'pickup' : 'delivery';
+      const deliveryFee = fulfillmentType === 'delivery' ? (Number(body.deliveryFee) || 5.0) : 0.0;
       const total = calculatedSubtotal + deliveryFee;
 
-      const orderNumber = body.orderNumber || generateShortOrderNumber();
+      const orderNumber = body.orderNumber || generateOrderNumber();
 
       const orderData: DbOrder = {
         order_number: orderNumber,
         customer_name: body.customerName.trim(),
         customer_phone: body.customerPhone ? body.customerPhone.trim() : undefined,
-        delivery_type: deliveryType,
-        address_street: body.address?.street,
-        address_number: body.address?.number,
-        address_neighborhood: body.address?.neighborhood,
-        address_complement: body.address?.complement,
-        address_reference: body.address?.reference,
+        fulfillment_type: fulfillmentType,
+        address: body.address ? {
+          street: body.address.street,
+          number: body.address.number,
+          neighborhood: body.address.neighborhood,
+          complement: body.address.complement,
+          reference: body.address.reference,
+        } : undefined,
         items: parsedItems,
         subtotal: Number(calculatedSubtotal.toFixed(2)),
         delivery_fee: Number(deliveryFee.toFixed(2)),
-        discount: 0.0,
         total: Number(total.toFixed(2)),
         payment_method: body.paymentMethod || 'delivery',
-        delivery_payment_method: body.deliveryPaymentMethod,
-        card_type: body.cardType,
-        change_for: body.changeFor ? Number(body.changeFor) : undefined,
         payment_status: body.paymentStatus || (body.paymentMethod === 'delivery' ? 'paid_on_delivery' : 'pending'),
-        payment_id: body.paymentId,
-        order_status: 'novo',
-        general_notes: body.generalNotes,
-        whatsapp_notification_status: 'pending',
+        order_status: 'new', // Status inicial obrigatório
+        notes: body.notes || body.generalNotes,
+        whatsapp_status: 'pending',
+        push_status: 'pending',
+        email_status: 'pending',
+        notification_attempts: 0,
       };
 
-      // 1. Salva o pedido no banco de dados (Supabase / Memory)
+      // 2. SALVA IMEDIATAMENTE NO BANCO DE DADOS
       const savedOrder = await insertOrder(orderData);
+      const elapsedMs = Date.now() - startTime;
+      console.log(`[API /orders] Order ${savedOrder.order_number} saved to database in ${elapsedMs}ms.`);
 
-      // 2. Dispara a notificação automática para o WhatsApp da loja (13) 99150-9733
-      let notificationResult = { sent: false, status: 'pending' as const, error: undefined as string | undefined };
+      // 3. EXECUTA NOTIFICAÇÕES EM SEGUNDO PLANO (NON-BLOCKING)
       try {
-        notificationResult = await sendWhatsAppNotification(savedOrder);
-      } catch (notifErr: any) {
-        console.error('Error dispatching automated WhatsApp notification:', notifErr);
-        notificationResult = { sent: false, status: 'failed', error: notifErr?.message };
+        waitUntil(dispatchAllBackgroundNotifications(savedOrder));
+      } catch (waitErr) {
+        // Fallback para execução assíncrona se não estiver em ambiente serverless Vercel
+        dispatchAllBackgroundNotifications(savedOrder).catch(err =>
+          console.error('[Background Notification Error]:', err)
+        );
       }
 
+      // 4. RETORNA HTTP 201 IMEDIATAMENTE AO CLIENTE
       return res.status(201).json({
         success: true,
-        orderId: savedOrder.order_number,
-        order: savedOrder,
-        notification: notificationResult,
+        orderId: savedOrder.id || savedOrder.order_number,
+        orderNumber: savedOrder.order_number,
+        status: savedOrder.order_status,
+        savedInMs: elapsedMs,
       });
 
     } catch (err: any) {
-      console.error('Create order error:', err);
+      console.error('[API /orders] Error creating order:', err);
       return res.status(500).json({
         success: false,
-        error: 'Erro interno ao registrar pedido.',
+        error: 'Erro interno ao salvar pedido no banco de dados.',
         message: err?.message,
       });
     }
