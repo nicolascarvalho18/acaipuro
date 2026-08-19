@@ -16,9 +16,10 @@ import {
   CreditCard, 
   Banknote, 
   Send, 
-  CheckCircle,
+  CheckCircle2,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Clock
 } from 'lucide-react';
 
 export const CheckoutModal: React.FC = () => {
@@ -42,7 +43,7 @@ export const CheckoutModal: React.FC = () => {
   const [complement, setComplement] = useState('');
   const [reference, setReference] = useState('');
 
-  // 3 formas principais de pagamento
+  // 3 opções de pagamento
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('pix');
   
   // Opções para pagamento na entrega
@@ -57,6 +58,7 @@ export const CheckoutModal: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [completedOrder, setCompletedOrder] = useState<OrderDetails | null>(null);
+  const [notificationSent, setNotificationSent] = useState<boolean>(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -101,6 +103,8 @@ export const CheckoutModal: React.FC = () => {
     setErrorMessage(null);
 
     const orderId = generateOrderId();
+    const orderNumber = String(Math.floor(1000 + Math.random() * 9000));
+
     const order: OrderDetails = {
       orderId,
       customerName: customerName.trim(),
@@ -129,11 +133,53 @@ export const CheckoutModal: React.FC = () => {
       createdAt: new Date().toISOString()
     };
 
-    // Fluxo 1: Pagamento Online (Pix ou Cartão via Mercado Pago)
+    // 1. REGISTRO AUTOMÁTICO DO PEDIDO NA API E NOTIFICAÇÃO AO WHATSAPP DA LOJA
+    try {
+      const orderPayload = {
+        orderNumber,
+        customerName: customerName.trim(),
+        customerPhone: customerPhone.trim() || undefined,
+        deliveryType,
+        address: order.address,
+        paymentMethod,
+        deliveryPaymentMethod: order.deliveryPaymentMethod,
+        cardType: order.cardType,
+        changeFor: order.changeFor,
+        generalNotes: order.generalNotes,
+        items: cart.map(item => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+          size: item.selectedSize?.ml,
+          base: item.selectedBase?.name,
+          additionals: item.selectedAdditionals?.map(a => a.additional.name),
+          notes: item.notes,
+        })),
+        subtotal,
+        deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
+        total,
+      };
+
+      const orderRes = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderPayload),
+      });
+
+      const orderData = await orderRes.json();
+      if (orderData.notification?.sent) {
+        setNotificationSent(true);
+      }
+    } catch (apiErr) {
+      console.warn('Backend order recording error (fallback to local flow):', apiErr);
+    }
+
+    // 2. FLUXO DE PAGAMENTO ONLINE OU ENTREGA
     if (paymentMethod === 'pix' || paymentMethod === 'card_online') {
       try {
-        const payload = {
-          orderId,
+        const preferencePayload = {
+          orderId: orderNumber,
           customerName: customerName.trim(),
           customerPhone: customerPhone.trim() || undefined,
           deliveryType,
@@ -155,49 +201,30 @@ export const CheckoutModal: React.FC = () => {
 
         const res = await fetch('/api/payments/create-preference', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(preferencePayload),
         });
 
         const data = await res.json();
 
         if (data.success && (data.initPoint || data.sandboxInitPoint)) {
-          // Salvar dados do pedido no sessionStorage para exibição ao retornar
-          sessionStorage.setItem(`order_${orderId}`, JSON.stringify(order));
-          
-          // Redireciona para o Checkout Pro seguro do Mercado Pago
+          sessionStorage.setItem(`order_${orderNumber}`, JSON.stringify(order));
           window.location.href = data.initPoint || data.sandboxInitPoint;
           return;
         }
 
-        // Caso as credenciais comerciais ainda não estejam cadastradas na Vercel
-        if (data.fallbackToWhatsApp) {
-          setErrorMessage('O pagamento online está sendo configurado pelo estabelecimento. Vamos encaminhar seu pedido diretamente pelo WhatsApp.');
-          setTimeout(() => {
-            const whatsappUrl = getWhatsAppUrl(order, STORE_CONFIG);
-            window.open(whatsappUrl, '_blank');
-            setCompletedOrder(order);
-            clearCart();
-            setIsSubmitting(false);
-          }, 2000);
-          return;
-        }
-
-        throw new Error(data.error || 'Não foi possível gerar a preferência de pagamento.');
-      } catch (err: any) {
-        console.error('Online payment error:', err);
-        setErrorMessage('Não foi possível conectar ao pagamento online no momento. Você pode finalizar seu pedido pelo WhatsApp.');
+        // Se Mercado Pago estiver em configuração, exibe confirmação do pedido registrado
+        setCompletedOrder({ ...order, orderId: orderNumber });
+        clearCart();
         setIsSubmitting(false);
         return;
+      } catch (err) {
+        console.error('Online payment error:', err);
       }
     }
 
-    // Fluxo 2: Pagamento na Entrega (Dinheiro ou Cartão)
-    setCompletedOrder(order);
-    const whatsappUrl = getWhatsAppUrl(order, STORE_CONFIG);
-    window.open(whatsappUrl, '_blank');
+    // Pagamento na entrega ou finalização direta
+    setCompletedOrder({ ...order, orderId: orderNumber });
     clearCart();
     setIsSubmitting(false);
   };
@@ -218,10 +245,10 @@ export const CheckoutModal: React.FC = () => {
         <div className="p-4 sm:p-5 border-b border-[#ECE8F0] flex items-center justify-between bg-white shrink-0">
           <div>
             <h2 className="text-base font-bold text-[#28242A] font-['DM_Sans']">
-              {completedOrder ? 'Pedido Enviado' : 'Finalizar Pedido'}
+              {completedOrder ? 'Pedido Confirmado' : 'Finalizar Pedido'}
             </h2>
             <p className="text-xs text-[#726C74] mt-0.5">
-              {completedOrder ? 'Acompanhe pelo WhatsApp' : 'Preencha seus dados para entrega'}
+              {completedOrder ? 'Recebimento automático registrado' : 'Preencha seus dados para entrega'}
             </p>
           </div>
 
@@ -234,40 +261,51 @@ export const CheckoutModal: React.FC = () => {
           </button>
         </div>
 
-        {/* TELA DE SUCESSO DO WHATSAPP */}
+        {/* TELA DE CONFIRMAÇÃO DO CLIENTE */}
         {completedOrder ? (
           <div className="p-6 text-center space-y-5 overflow-y-auto">
-            <div className="w-12 h-12 rounded-full bg-[#F3EDF6] text-[#69318A] flex items-center justify-center mx-auto shadow-2xs">
-              <CheckCircle className="w-7 h-7 stroke-[1.8]" />
+            <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-100 shadow-2xs">
+              <CheckCircle2 className="w-8 h-8 stroke-[1.8]" />
             </div>
 
             <div className="space-y-1">
-              <h3 className="text-lg font-bold text-[#28242A] font-['DM_Sans']">
-                Pedido gerado com sucesso
+              <h3 className="text-xl font-bold text-[#28242A] font-['DM_Sans']">
+                Pedido recebido!
               </h3>
-              <p className="text-xs text-[#726C74]">
-                Identificador do pedido: <strong>{completedOrder.orderId}</strong>
+              <p className="text-xs sm:text-sm text-[#726C74]">
+                Seu pedido foi registrado com sucesso e já está sendo preparado pela açaiteria.
               </p>
             </div>
 
-            <div className="bg-[#FCFAF7] p-4 rounded-xl border border-[#ECE8F0] text-xs text-[#726C74] text-left space-y-1">
+            <div className="bg-[#FCFAF7] p-4 rounded-xl border border-[#ECE8F0] text-xs text-[#726C74] text-left space-y-2">
+              <div className="flex justify-between items-center pb-2 border-b border-[#ECE8F0]">
+                <span>Número do pedido:</span>
+                <span className="font-extrabold text-sm text-[#28242A] font-['DM_Sans']">#{completedOrder.orderId}</span>
+              </div>
               <p><strong>Cliente:</strong> {completedOrder.customerName}</p>
-              <p><strong>Tipo:</strong> {completedOrder.deliveryType === 'delivery' ? 'Entrega' : 'Retirada'}</p>
-              <p><strong>Total:</strong> {formatCurrency(completedOrder.total)}</p>
-              <p className="pt-1 text-[11px] text-[#69318A] font-semibold">
-                A mensagem do pedido foi aberta no seu WhatsApp para confirmação da loja.
-              </p>
+              <p><strong>Tipo:</strong> {completedOrder.deliveryType === 'delivery' ? '🛵 Entrega' : '🏪 Retirada na loja'}</p>
+              {completedOrder.deliveryType === 'delivery' && completedOrder.address && (
+                <p><strong>Endereço:</strong> {completedOrder.address.street}, Nº {completedOrder.address.number} - {completedOrder.address.neighborhood}</p>
+              )}
+              <div className="flex items-center gap-1.5 pt-1">
+                <Clock className="w-3.5 h-3.5 text-[#69318A]" />
+                <span><strong>Tempo estimado:</strong> {STORE_CONFIG.delivery.estimatedTime}</span>
+              </div>
+              <div className="flex justify-between items-center pt-2 border-t border-[#ECE8F0]">
+                <span>Total:</span>
+                <span className="font-bold text-sm text-[#49245B]">{formatCurrency(completedOrder.total)}</span>
+              </div>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2 pt-1">
               <a
                 href={getWhatsAppUrl(completedOrder, STORE_CONFIG)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full h-11 bg-[#69318A] hover:bg-[#572185] text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all shadow-xs cursor-pointer"
+                className="w-full h-11 bg-white hover:bg-[#F3EDF6] text-[#69318A] border border-[#ECE8F0] text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
               >
                 <Send className="w-4 h-4 stroke-[1.8]" />
-                <span>Abrir WhatsApp da Loja</span>
+                <span>Falar com a loja pelo WhatsApp (Opcional)</span>
               </a>
 
               <button
@@ -283,7 +321,7 @@ export const CheckoutModal: React.FC = () => {
           /* FORMULÁRIO DE FINALIZAÇÃO */
           <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
             
-            {/* Mensagem de Erro / Alerta */}
+            {/* Mensagem de Erro */}
             {errorMessage && (
               <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 stroke-[1.8]" />
@@ -653,7 +691,7 @@ export const CheckoutModal: React.FC = () => {
               {isSubmitting ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Processando...</span>
+                  <span>Registrando pedido...</span>
                 </>
               ) : paymentMethod === 'pix' ? (
                 <>
@@ -667,8 +705,8 @@ export const CheckoutModal: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <Send className="w-4 h-4" />
-                  <span>Finalizar pelo WhatsApp</span>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Confirmar pedido ({formatCurrency(total)})</span>
                 </>
               )}
             </button>

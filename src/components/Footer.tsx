@@ -2,9 +2,13 @@ import React from 'react';
 import { STORE_CONFIG } from '../config/storeConfig';
 import { Logo } from './Logo';
 import { InstagramIcon } from './Icons';
-import { Clock, MapPin, Send } from 'lucide-react';
+import { Clock, MapPin, Send, Lock } from 'lucide-react';
 
-export const Footer: React.FC = () => {
+interface FooterProps {
+  onOpenAdmin?: () => void;
+}
+
+export const Footer: React.FC<FooterProps> = ({ onOpenAdmin }) => {
   const currentYear = new Date().getFullYear();
 
   return (
@@ -70,6 +74,17 @@ export const Footer: React.FC = () => {
               <li><a href="#cardapio" className="hover:text-white transition-colors">Cardápio</a></li>
               <li><a href="#promocoes" className="hover:text-white transition-colors">Combos</a></li>
               <li><a href="#sobre" className="hover:text-white transition-colors">Sobre</a></li>
+              {onOpenAdmin && (
+                <li className="pt-1">
+                  <button
+                    onClick={onOpenAdmin}
+                    className="flex items-center gap-1 text-white/60 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>Painel do Lojista</span>
+                  </button>
+                </li>
+              )}
             </ul>
           </div>
 

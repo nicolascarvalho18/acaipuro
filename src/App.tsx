@@ -14,6 +14,7 @@ import { CartDrawer } from './components/CartDrawer';
 import { FloatingCartBar } from './components/FloatingCartBar';
 import { CheckoutModal } from './components/CheckoutModal';
 import { PaymentResultModal } from './components/PaymentResultModal';
+import { AdminPanel } from './components/AdminPanel';
 import { ContactSection } from './components/ContactSection';
 import { Footer } from './components/Footer';
 import { ToastNotification } from './components/ToastNotification';
@@ -28,6 +29,7 @@ const MainContent: React.FC = () => {
   
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
 
   const loadCatalog = async () => {
     setIsLoading(true);
@@ -47,6 +49,12 @@ const MainContent: React.FC = () => {
 
   useEffect(() => {
     loadCatalog();
+
+    // Abrir painel se a URL tiver ?admin=true
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('admin') === 'true' || params.get('admin') === '1') {
+      setIsAdminOpen(true);
+    }
   }, []);
 
   // Contagem de produtos por categoria
@@ -112,7 +120,7 @@ const MainContent: React.FC = () => {
               Nosso cardápio
             </h2>
             <p className="text-sm text-[#726C74] mt-1.5">
-              Escolha seu açaí, personalize os adicionais e finalize pelo WhatsApp ou online.
+              Escolha seu açaí, personalize os adicionais e confirme seu pedido online.
             </p>
           </div>
 
@@ -176,7 +184,7 @@ const MainContent: React.FC = () => {
       <ContactSection />
 
       {/* Rodapé */}
-      <Footer />
+      <Footer onOpenAdmin={() => setIsAdminOpen(true)} />
 
       {/* Modais e Drawers */}
       {selectedProductForModal && (
@@ -190,6 +198,7 @@ const MainContent: React.FC = () => {
       <FloatingCartBar />
       <CheckoutModal />
       <PaymentResultModal />
+      <AdminPanel isOpen={isAdminOpen} onClose={() => setIsAdminOpen(false)} />
       <ToastNotification />
 
     </div>
