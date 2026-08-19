@@ -70,7 +70,7 @@ const MainContent: React.FC = () => {
     return counts;
   }, [products]);
 
-  // Filtragem de produtos por categoria e termo de busca
+  // Filtragem de produtos por categoria e busca
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
       const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
@@ -86,7 +86,7 @@ const MainContent: React.FC = () => {
   }, [products, selectedCategory, searchQuery]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#FCFAFD] text-[#24152D] font-sans">
+    <div className="min-h-screen flex flex-col bg-[#FBFAFC] text-[#26222A] font-sans">
       
       {/* Barra de Avisos Superior */}
       <AnnouncementBar />
@@ -94,28 +94,25 @@ const MainContent: React.FC = () => {
       {/* Cabeçalho */}
       <Header />
 
-      {/* Hero Principal */}
+      {/* Apresentação Principal (Hero) */}
       <Hero />
 
-      {/* Diferenciais / Sobre */}
+      {/* Diferenciais */}
       <Diferenciais />
 
-      {/* Combos e Ofertas */}
+      {/* Combos da Semana */}
       <Promotions products={products} />
 
       {/* Seção do Cardápio */}
-      <section id="cardapio" className="py-16 bg-white border-t border-[#F0EBF5]">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+      <section id="cardapio" className="py-14 sm:py-18 bg-white border-t border-[#ECE8F0]">
+        <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8">
           
           <div className="text-center max-w-2xl mx-auto mb-10">
-            <p className="text-xs sm:text-sm font-medium text-[#6B6471] uppercase tracking-wide mb-1">
-              Cardápio Completo
-            </p>
-            <h2 className="text-2xl sm:text-3xl font-bold text-[#24152D] font-['DM_Sans'] tracking-tight">
-              Escolha seu açaí e adicionais
+            <h2 className="text-2xl sm:text-3xl font-bold text-[#26222A] font-['DM_Sans'] tracking-tight">
+              Nosso cardápio
             </h2>
-            <p className="text-xs sm:text-sm text-[#6B6471] mt-1.5">
-              Ingredientes frescos, porções generosas e montagem na hora.
+            <p className="text-sm text-[#716B76] mt-1.5">
+              Escolha seu açaí, personalize os adicionais e finalize pelo WhatsApp.
             </p>
           </div>
 
@@ -145,27 +142,27 @@ const MainContent: React.FC = () => {
 
           {isLoading ? (
             <div className="py-20 flex flex-col items-center justify-center space-y-3">
-              <div className="w-8 h-8 border-3 border-[#F4EFF8] border-t-[#572185] rounded-full animate-spin"></div>
-              <p className="text-xs text-[#6B6471]">Carregando cardápio...</p>
+              <div className="w-8 h-8 border-3 border-[#F4EFF8] border-t-[#542381] rounded-full animate-spin"></div>
+              <p className="text-xs text-[#716B76]">Carregando cardápio...</p>
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="py-16 text-center max-w-md mx-auto space-y-3 bg-[#FCFAFD] p-8 rounded-2xl border border-[#F0EBF5]">
-              <h3 className="text-base font-bold text-[#24152D] font-['DM_Sans']">Nenhum item encontrado</h3>
-              <p className="text-xs text-[#6B6471]">
-                Não encontramos itens para "{searchQuery}". Tente buscar por outros termos.
+            <div className="py-16 text-center max-w-md mx-auto space-y-3 bg-[#FBFAFC] p-8 rounded-2xl border border-[#ECE8F0]">
+              <h3 className="text-base font-bold text-[#26222A] font-['DM_Sans']">Nenhum item encontrado</h3>
+              <p className="text-xs text-[#716B76]">
+                Não encontramos produtos correspondentes a "{searchQuery}".
               </p>
               <button
                 onClick={() => {
                   setSearchQuery('');
                   setSelectedCategory('all');
                 }}
-                className="px-4 py-2 bg-[#572185] text-white text-xs font-medium rounded-xl hover:bg-[#431868] transition-all"
+                className="px-4 py-2 bg-[#542381] text-white text-xs font-medium rounded-xl hover:bg-[#431868] transition-all cursor-pointer"
               >
                 Limpar busca
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
               {filteredProducts.map((product) => (
                 <ProductCard key={product.id} product={product} />
               ))}
@@ -178,7 +175,7 @@ const MainContent: React.FC = () => {
       {/* Avaliações */}
       <Testimonials />
 
-      {/* Localização e Horários */}
+      {/* Localização e Atendimento */}
       <ContactSection />
 
       {/* Rodapé */}

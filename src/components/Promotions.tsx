@@ -2,7 +2,6 @@ import React from 'react';
 import type { Product } from '../types';
 import { useCart } from '../contexts/CartContext';
 import { formatCurrency } from '../utils/formatters';
-import { ArrowRight, Tag } from 'lucide-react';
 
 interface PromotionsProps {
   products: Product[];
@@ -11,25 +10,20 @@ interface PromotionsProps {
 export const Promotions: React.FC<PromotionsProps> = ({ products }) => {
   const { openProductModal, addToCart } = useCart();
   
-  const promoProducts = products.filter(p => p.isPromotion || p.category === 'combos').slice(0, 3);
+  const promoProducts = products.filter(p => p.category === 'combos' || p.isPromotion).slice(0, 3);
 
   if (promoProducts.length === 0) return null;
 
   return (
-    <section id="promocoes" className="py-16 bg-[#FCFAFD]">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section id="promocoes" className="py-14 sm:py-18 bg-[#FBFAFC]">
+      <div className="max-w-[1200px] mx-auto px-4 sm:px-6 lg:px-8">
         
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-10">
-          <div>
-            <p className="text-xs sm:text-sm font-medium text-[#6B6471] uppercase tracking-wide mb-1">
-              Combos & Especiais
-            </p>
-            <h2 className="text-2xl sm:text-3xl font-bold text-[#24152D] font-['DM_Sans'] tracking-tight">
-              Ofertas da semana
-            </h2>
-          </div>
-          <p className="text-xs sm:text-sm text-[#6B6471]">
-            Combinações perfeitas com preços especiais
+        <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
+          <h2 className="text-2xl sm:text-3xl font-bold text-[#26222A] font-['DM_Sans'] tracking-tight">
+            Combos da semana
+          </h2>
+          <p className="text-sm text-[#716B76] mt-1.5">
+            Opções especiais para compartilhar ou aproveitar sozinho.
           </p>
         </div>
 
@@ -41,40 +35,39 @@ export const Promotions: React.FC<PromotionsProps> = ({ products }) => {
             return (
               <div
                 key={product.id}
-                className="bg-white rounded-2xl overflow-hidden border border-[#F0EBF5] shadow-xs flex flex-col justify-between hover:border-[#E4D9ED] transition-all"
+                className="bg-white rounded-2xl overflow-hidden border border-[#ECE8F0] shadow-xs flex flex-col justify-between"
               >
                 <div>
-                  <div className="relative h-48 overflow-hidden bg-[#F4EFF8]">
+                  <div className="relative h-48 sm:h-52 overflow-hidden bg-[#FBFAFC]">
                     <img
                       src={product.image}
                       alt={product.name}
                       className="w-full h-full object-cover"
                       loading="lazy"
                     />
-                    {hasDiscount && (
+                    {product.badge && (
                       <div className="absolute top-3 left-3">
-                        <span className="px-2.5 py-1 rounded-lg bg-[#572185] text-white text-[11px] font-semibold tracking-wide flex items-center gap-1 shadow-xs">
-                          <Tag className="w-3 h-3" />
-                          Oferta Especial
+                        <span className="px-2.5 py-0.5 rounded-md bg-[#542381] text-white text-[11px] font-medium tracking-wide">
+                          {product.badge}
                         </span>
                       </div>
                     )}
                   </div>
 
                   <div className="p-5">
-                    <h3 className="text-base font-bold text-[#24152D] font-['DM_Sans']">
+                    <h3 className="text-base font-bold text-[#26222A] font-['DM_Sans']">
                       {product.name}
                     </h3>
-                    <p className="text-xs sm:text-sm text-[#6B6471] mt-1.5 line-clamp-2 leading-relaxed">
+                    <p className="text-xs sm:text-sm text-[#716B76] mt-1.5 line-clamp-2 leading-relaxed">
                       {product.description}
                     </p>
 
                     <div className="mt-4 flex items-baseline gap-2">
-                      <span className="text-xl font-bold text-[#24152D] font-['DM_Sans']">
+                      <span className="text-xl font-bold text-[#26222A] font-['DM_Sans']">
                         {formatCurrency(currentPrice)}
                       </span>
                       {hasDiscount && (
-                        <span className="text-xs text-[#6B6471] line-through">
+                        <span className="text-xs text-[#716B76] line-through">
                           {formatCurrency(product.price)}
                         </span>
                       )}
@@ -96,10 +89,9 @@ export const Promotions: React.FC<PromotionsProps> = ({ products }) => {
                         });
                       }
                     }}
-                    className="w-full h-11 px-4 bg-[#572185] hover:bg-[#431868] text-white font-medium text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full h-11 px-4 bg-[#542381] hover:bg-[#431868] text-white font-medium text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center cursor-pointer"
                   >
-                    <span>{product.allowsCustomization ? 'Personalizar' : 'Adicionar ao pedido'}</span>
-                    <ArrowRight className="w-4 h-4" />
+                    Escolher
                   </button>
                 </div>
               </div>

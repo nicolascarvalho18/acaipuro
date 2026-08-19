@@ -13,7 +13,6 @@ export function formatCurrency(value: number): string {
 
 /**
  * Gera um identificador único de pedido no formato: PED-YYYYMMDD-HHMMSS-XXX
- * Exemplo: PED-20260819-173045-482
  */
 export function generateOrderId(): string {
   const now = new Date();
@@ -26,7 +25,7 @@ export function generateOrderId(): string {
   const minutes = String(now.getMinutes()).padStart(2, '0');
   const seconds = String(now.getSeconds()).padStart(2, '0');
   
-  const randomPart = Math.floor(100 + Math.random() * 900); // 3 dígitos aleatórios
+  const randomPart = Math.floor(100 + Math.random() * 900);
   
   return `PED-${year}${month}${day}-${hours}${minutes}${seconds}-${randomPart}`;
 }
@@ -45,27 +44,24 @@ export function formatPhoneNumber(phone: string): string {
 }
 
 /**
- * Constrói a mensagem formatada para envio direto ao WhatsApp do lojista
+ * Constrói a mensagem formatada para envio direto ao WhatsApp da loja
  */
 export function buildWhatsAppMessage(order: OrderDetails, storeConfig: StoreConfig): string {
   const lines: string[] = [];
 
-  lines.push(`🍧 *NOVO PEDIDO - ${storeConfig.storeName.toUpperCase()}*`);
-  lines.push(`Olá! Gostaria de fazer um pedido.`);
+  lines.push(`*NOVO PEDIDO - ${storeConfig.storeName.toUpperCase()}*`);
+  lines.push(`Olá! Gostaria de fazer o seguinte pedido:`);
   lines.push(``);
-  lines.push(`📋 *Pedido:* ${order.orderId}`);
-  lines.push(``);
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`🛒 *ITENS DO PEDIDO:*`);
-  lines.push(``);
+  lines.push(`*Pedido:* ${order.orderId}`);
+  lines.push(`----------------------------------------`);
+  lines.push(`*ITENS:*`);
 
-  order.items.forEach((item, index) => {
+  order.items.forEach((item) => {
     const sizeName = item.selectedSize ? ` (${item.selectedSize.ml})` : '';
-    const itemHeader = `${item.quantity}x *${item.product.name}*${sizeName} — ${formatCurrency(item.totalPrice)}`;
-    lines.push(itemHeader);
+    lines.push(`• ${item.quantity}x *${item.product.name}*${sizeName} — ${formatCurrency(item.totalPrice)}`);
 
     if (item.selectedBase && item.selectedBase.id !== 'base_tradicional') {
-      lines.push(`   └ *Base:* ${item.selectedBase.name}`);
+      lines.push(`  Base: ${item.selectedBase.name}`);
     }
 
     if (item.selectedAdditionals && item.selectedAdditionals.length > 0) {
@@ -78,46 +74,37 @@ export function buildWhatsAppMessage(order: OrderDetails, storeConfig: StoreConf
         .map(a => `${a.additional.name} (+${formatCurrency(a.unitPrice)})`);
 
       if (freeAdds.length > 0) {
-        lines.push(`   └ *Adicionais inclusos:* ${freeAdds.join(', ')}`);
+        lines.push(`  Adicionais: ${freeAdds.join(', ')}`);
       }
       if (paidAdds.length > 0) {
-        lines.push(`   └ *Adicionais extras:* ${paidAdds.join(', ')}`);
+        lines.push(`  Extras: ${paidAdds.join(', ')}`);
       }
     }
 
     if (item.notes && item.notes.trim()) {
-      lines.push(`   └ *Obs do item:* _${item.notes.trim()}_`);
-    }
-
-    if (index < order.items.length - 1) {
-      lines.push(``);
+      lines.push(`  Obs: ${item.notes.trim()}`);
     }
   });
 
-  lines.push(``);
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`💰 *RESUMO DE VALORES:*`);
+  lines.push(`----------------------------------------`);
   lines.push(`Subtotal: ${formatCurrency(order.subtotal)}`);
   
   if (order.deliveryType === 'delivery') {
-    lines.push(`Taxa de entrega: ${order.deliveryFee === 0 ? 'GRÁTIS 🎉' : formatCurrency(order.deliveryFee)}`);
+    lines.push(`Taxa de entrega: ${order.deliveryFee === 0 ? 'Grátis' : formatCurrency(order.deliveryFee)}`);
   } else {
-    lines.push(`Tipo: Retirada no balcão (Sem taxa)`);
+    lines.push(`Recebimento: Retirada na loja`);
   }
   
-  lines.push(`*Total a pagar: ${formatCurrency(order.total)}*`);
-  lines.push(``);
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`👤 *DADOS DO CLIENTE:*`);
-  lines.push(`Nome: *${order.customerName}*`);
+  lines.push(`*Total: ${formatCurrency(order.total)}*`);
+  lines.push(`----------------------------------------`);
+  lines.push(`*DADOS DE ENTREGA:*`);
+  lines.push(`Nome: ${order.customerName}`);
   if (order.customerPhone) {
     lines.push(`Telefone: ${order.customerPhone}`);
   }
-  lines.push(`Recebimento: *${order.deliveryType === 'delivery' ? 'Entrega (Delivery)' : 'Retirada na Loja'}*`);
+  lines.push(`Tipo: ${order.deliveryType === 'delivery' ? 'Entrega' : 'Retirada'}`);
 
   if (order.deliveryType === 'delivery' && order.address) {
-    lines.push(``);
-    lines.push(`📍 *ENDEREÇO DE ENTREGA:*`);
     lines.push(`Endereço: ${order.address.street}, Nº ${order.address.number}`);
     lines.push(`Bairro: ${order.address.neighborhood}`);
     if (order.address.complement && order.address.complement.trim()) {
@@ -129,33 +116,25 @@ export function buildWhatsAppMessage(order: OrderDetails, storeConfig: StoreConf
   }
 
   lines.push(``);
-  lines.push(`💳 *FORMA DE PAGAMENTO:*`);
+  lines.push(`*PAGAMENTO:*`);
   if (order.paymentMethod === 'pix') {
-    lines.push(`Forma: *Pix*`);
-    lines.push(`Chave Pix da Loja: \`${storeConfig.pix.key}\` (${storeConfig.pix.receiverName})`);
-    lines.push(`_(Por favor, envie o comprovante após a mensagem)_`);
+    lines.push(`Forma: Pix`);
   } else if (order.paymentMethod === 'card_delivery') {
     const cardInfo = order.cardType === 'credit' ? 'Cartão de Crédito' : order.cardType === 'debit' ? 'Cartão de Débito' : 'Cartão';
-    const brand = order.cardBrand ? ` (${order.cardBrand})` : '';
-    lines.push(`Forma: *${cardInfo}${brand} na entrega* (levar maquininha)`);
+    lines.push(`Forma: ${cardInfo} na entrega`);
   } else if (order.paymentMethod === 'cash') {
-    lines.push(`Forma: *Dinheiro*`);
+    lines.push(`Forma: Dinheiro`);
     if (order.changeFor && order.changeFor > order.total) {
-      lines.push(`Troco para: ${formatCurrency(order.changeFor)} (Troco: ${formatCurrency(order.changeFor - order.total)})`);
+      lines.push(`Troco para: ${formatCurrency(order.changeFor)}`);
     } else {
-      lines.push(`Não precisa de troco (Valor exato)`);
+      lines.push(`Troco: Não precisa de troco`);
     }
   }
 
   if (order.generalNotes && order.generalNotes.trim()) {
     lines.push(``);
-    lines.push(`📝 *OBSERVAÇÕES DO PEDIDO:*`);
-    lines.push(`_${order.generalNotes.trim()}_`);
+    lines.push(`*Observações:* ${order.generalNotes.trim()}`);
   }
-
-  lines.push(``);
-  lines.push(`━━━━━━━━━━━━━━━━━━━━━`);
-  lines.push(`Aguardando a confirmação do pedido pela equipe da açaiteria! 💜`);
 
   return lines.join('\n');
 }
@@ -187,12 +166,12 @@ export function isStoreOpen(storeConfig: StoreConfig): { isOpen: boolean; messag
   if (isOpen) {
     return {
       isOpen: true,
-      message: `Aberto agora • Fecha às ${end}:00`
+      message: `Aberto agora • Fecha às ${end}h`
     };
   } else {
     return {
       isOpen: false,
-      message: `Fechado agora • Abre às ${start}:00`
+      message: `Fechado • Abre às ${start}h`
     };
   }
 }

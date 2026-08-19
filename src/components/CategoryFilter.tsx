@@ -21,21 +21,21 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
   return (
     <div className="space-y-4 mb-8">
       
-      {/* Barra de Busca */}
-      <div className="relative max-w-lg mx-auto">
+      {/* Campo de Busca */}
+      <div className="relative max-w-md mx-auto">
         <div className="relative flex items-center">
-          <Search className="w-4 h-4 text-[#6B6471] absolute left-3.5 pointer-events-none" />
+          <Search className="w-4 h-4 text-[#716B76] absolute left-3.5 pointer-events-none" />
           <input
             type="text"
-            placeholder="Buscar por açaí, fruta, complemento..."
+            placeholder="Buscar produto"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full pl-10 pr-9 py-2.5 bg-white rounded-xl border border-[#E4D9ED] focus:border-[#572185] focus:ring-1 focus:ring-[#572185] text-xs sm:text-sm text-[#24152D] placeholder-[#6B6471] transition-all outline-none"
+            className="w-full pl-10 pr-9 py-2.5 bg-white rounded-xl border border-[#ECE8F0] focus:border-[#542381] focus:ring-1 focus:ring-[#542381] text-xs sm:text-sm text-[#26222A] placeholder-[#716B76] transition-all outline-none"
           />
           {searchQuery && (
             <button
               onClick={() => onSearchChange('')}
-              className="absolute right-3 p-1 text-[#6B6471] hover:text-[#24152D] rounded-full"
+              className="absolute right-3 p-1 text-[#716B76] hover:text-[#26222A] rounded-full"
               title="Limpar busca"
             >
               <X className="w-3.5 h-3.5" />
@@ -56,13 +56,13 @@ export const CategoryFilter: React.FC<CategoryFilterProps> = ({
               onClick={() => onSelectCategory(cat.id)}
               className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-medium whitespace-nowrap transition-all cursor-pointer shrink-0 ${
                 isSelected
-                  ? 'bg-[#572185] text-white shadow-xs'
-                  : 'bg-white text-[#6B6471] hover:text-[#24152D] hover:bg-[#F4EFF8] border border-[#F0EBF5]'
+                  ? 'bg-[#542381] text-white shadow-2xs'
+                  : 'bg-white text-[#716B76] hover:text-[#26222A] hover:bg-[#FBFAFC] border border-[#ECE8F0]'
               }`}
             >
               <span>{cat.name}</span>
               <span className={`px-1.5 py-0.2 rounded-md text-[10px] ${
-                isSelected ? 'bg-white/20 text-white' : 'bg-[#F4EFF8] text-[#572185]'
+                isSelected ? 'bg-white/20 text-white' : 'bg-[#FBFAFC] text-[#542381]'
               }`}>
                 {count}
               </span>
