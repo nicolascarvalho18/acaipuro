@@ -2,7 +2,7 @@ import React from 'react';
 import type { Product } from '../types';
 import { useCart } from '../contexts/CartContext';
 import { formatCurrency } from '../utils/formatters';
-import { Sparkles, Plus, Ban } from 'lucide-react';
+import { Plus } from 'lucide-react';
 
 interface ProductCardProps {
   product: Product;
@@ -32,103 +32,77 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
   };
 
   return (
-    <div className={`bg-white rounded-3xl overflow-hidden border border-purple-100 hover:border-purple-300 shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col justify-between group ${
-      !product.isAvailable ? 'opacity-70 grayscale-[0.5]' : ''
+    <div className={`bg-white rounded-2xl overflow-hidden border border-[#F0EBF5] hover:border-[#E4D9ED] transition-all flex flex-col justify-between ${
+      !product.isAvailable ? 'opacity-60' : ''
     }`}>
       
-      {/* Topo: Imagem com Badges e Hover Zoom */}
+      {/* Imagem do Produto */}
       <div>
-        <div className="relative h-48 sm:h-52 overflow-hidden bg-purple-50">
+        <div className="relative h-48 overflow-hidden bg-[#F4EFF8]">
           <img
             src={product.image}
             alt={product.name}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+            className="w-full h-full object-cover"
             loading="lazy"
           />
 
-          {/* Badges do Produto */}
-          <div className="absolute top-3 left-3 flex flex-col gap-1.5 z-10">
-            {product.badge && (
-              <span className="px-2.5 py-1 rounded-full bg-[#3D0C5A] text-white text-[11px] font-black shadow-md uppercase tracking-wider">
+          {/* Selo discreto se houver */}
+          {product.badge && (
+            <div className="absolute top-3 left-3">
+              <span className="px-2 py-0.5 rounded-md bg-[#24152D]/80 backdrop-blur-xs text-white text-[10px] font-medium tracking-wide">
                 {product.badge}
               </span>
-            )}
-            {hasDiscount && (
-              <span className="px-2.5 py-1 rounded-full bg-[#EC4899] text-white text-[11px] font-black shadow-md uppercase tracking-wider">
-                Promoção 🔥
-              </span>
-            )}
-            {!product.isAvailable && (
-              <span className="px-2.5 py-1 rounded-full bg-red-600 text-white text-[11px] font-black shadow-md uppercase tracking-wider flex items-center gap-1">
-                <Ban className="w-3 h-3" />
-                Esgotado
-              </span>
-            )}
-          </div>
-
-          {/* Badge de Adicionais Grátis se aplicável */}
-          {product.maxFreeAdditionals && product.maxFreeAdditionals > 0 && product.isAvailable && (
-            <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-full shadow-md border border-purple-100 text-[10px] font-bold text-purple-900 flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-amber-500" />
-              <span>{product.maxFreeAdditionals} adicionais grátis</span>
             </div>
           )}
         </div>
 
-        {/* Conteúdo: Título e Descrição */}
+        {/* Informações */}
         <div className="p-4 sm:p-5">
-          <h3 className="text-base sm:text-lg font-bold text-gray-900 group-hover:text-purple-900 transition-colors font-['Outfit'] line-clamp-1">
+          <h3 className="text-base font-bold text-[#24152D] font-['DM_Sans'] line-clamp-1">
             {product.name}
           </h3>
-          <p className="text-xs sm:text-sm text-gray-500 mt-1.5 line-clamp-2 leading-relaxed min-h-[2.5rem]">
+          <p className="text-xs sm:text-sm text-[#6B6471] mt-1 line-clamp-2 leading-relaxed min-h-[2.5rem]">
             {product.description}
           </p>
         </div>
       </div>
 
-      {/* Rodapé: Preço e Botão de Ação */}
+      {/* Preço e Botão */}
       <div className="p-4 sm:p-5 pt-0 mt-auto">
-        <div className="pt-3 border-t border-purple-50 flex items-center justify-between gap-2">
+        <div className="pt-3 border-t border-[#F0EBF5] flex items-center justify-between gap-2">
           
-          {/* Preço */}
           <div>
             {isStartingPrice && (
-              <span className="text-[10px] text-gray-400 font-semibold block uppercase">
+              <span className="text-[10px] text-[#6B6471] block font-normal">
                 A partir de
               </span>
             )}
             <div className="flex items-baseline gap-1.5">
-              <span className="text-lg sm:text-xl font-black text-[#2B0938] font-['Outfit']">
+              <span className="text-base sm:text-lg font-bold text-[#24152D] font-['DM_Sans']">
                 {formatCurrency(displayPrice)}
               </span>
               {hasDiscount && (
-                <span className="text-xs font-semibold text-gray-400 line-through">
+                <span className="text-xs text-[#6B6471] line-through">
                   {formatCurrency(product.price)}
                 </span>
               )}
             </div>
           </div>
 
-          {/* Botão */}
           {product.isAvailable ? (
             <button
               onClick={handleAction}
-              className={`px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl font-bold text-xs sm:text-sm transition-all flex items-center gap-1.5 cursor-pointer shrink-0 shadow-xs active:scale-[0.97] ${
+              className={`h-9 px-3.5 rounded-xl font-medium text-xs transition-all flex items-center gap-1 cursor-pointer ${
                 isCustomizable
-                  ? 'bg-[#3D0C5A] hover:bg-[#2B0938] text-white hover:shadow-md'
-                  : 'bg-purple-100 hover:bg-[#3D0C5A] text-purple-900 hover:text-white'
+                  ? 'bg-[#572185] hover:bg-[#431868] text-white'
+                  : 'bg-[#F4EFF8] hover:bg-[#EADDF0] text-[#572185]'
               }`}
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-3.5 h-3.5" />
               <span>{isCustomizable ? 'Montar' : 'Adicionar'}</span>
             </button>
           ) : (
-            <button
-              disabled
-              className="px-3.5 py-2 rounded-2xl font-bold text-xs bg-gray-100 text-gray-400 cursor-not-allowed"
-            >
-              Indisponível
-            </button>
+            <span className="text-xs text-[#6B6471] font-medium">Esgotado</span>
           )}
 
         </div>

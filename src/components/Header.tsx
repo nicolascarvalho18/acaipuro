@@ -1,197 +1,139 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { STORE_CONFIG } from '../config/storeConfig';
 import { useCart } from '../contexts/CartContext';
-import { formatCurrency } from '../utils/formatters';
-import { 
-  ShoppingBag, 
-  Menu as MenuIcon, 
-  X, 
-  FileSpreadsheet
-} from 'lucide-react';
+import { ShoppingBag, Menu, X } from 'lucide-react';
 
-interface HeaderProps {
-  onOpenSheetsGuide: () => void;
-}
+export const Header: React.FC = () => {
+  const { itemCount, setIsCartOpen } = useCart();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-export const Header: React.FC<HeaderProps> = ({ onOpenSheetsGuide }) => {
-  const { itemCount, subtotal, setIsCartOpen } = useCart();
-  const [isScrolled, setIsScrolled] = useState(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 20);
-    };
-    window.addEventListener('scroll', handleScroll);
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
-
-  const navLinks = [
-    { label: 'Início', href: '#inicio' },
-    { label: 'Cardápio', href: '#cardapio' },
-    { label: 'Combos & Ofertas', href: '#promocoes' },
-    { label: 'Diferenciais', href: '#diferenciais' },
-    { label: 'Avaliações', href: '#avaliacoes' },
-    { label: 'Localização', href: '#contato' },
-  ];
-
-  const handleNavClick = (href: string) => {
-    setIsMobileMenuOpen(false);
-    const element = document.querySelector(href);
+  const handleScroll = (id: string) => {
+    setMobileMenuOpen(false);
+    const element = document.getElementById(id);
     if (element) {
-      const offset = 80;
-      const bodyRect = document.body.getBoundingClientRect().top;
-      const elementRect = element.getBoundingClientRect().top;
-      const elementPosition = elementRect - bodyRect;
-      const offsetPosition = elementPosition - offset;
-
+      const offset = 70;
+      const elementPosition = element.getBoundingClientRect().top + window.pageYOffset;
       window.scrollTo({
-        top: offsetPosition,
+        top: elementPosition - offset,
         behavior: 'smooth'
       });
     }
   };
 
   return (
-    <header className={`sticky top-0 z-40 transition-all duration-300 ${
-      isScrolled 
-        ? 'bg-white/95 backdrop-blur-md shadow-lg shadow-purple-950/5 border-b border-purple-100 py-3' 
-        : 'bg-white border-b border-purple-50 py-4'
-    }`}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between gap-4">
+    <header className="sticky top-0 z-40 bg-white border-b border-[#F0EBF5] transition-all">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 h-18 sm:h-20 flex items-center justify-between">
+        
+        {/* À esquerda: Logo */}
+        <a href="#inicio" className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl bg-[#572185] flex items-center justify-center text-white text-base">
+            🍧
+          </div>
+          <div className="flex flex-col">
+            <span className="font-bold text-lg text-[#24152D] tracking-tight font-['DM_Sans'] leading-none">
+              {STORE_CONFIG.storeName}
+            </span>
+            <span className="text-[11px] text-[#6B6471] font-normal mt-0.5">
+              Açaí artesanal
+            </span>
+          </div>
+        </a>
+
+        {/* Ao centro: Links Cardápio, Combos, Sobre */}
+        <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-[#6B6471]">
+          <button
+            onClick={() => handleScroll('cardapio')}
+            className="hover:text-[#572185] transition-colors cursor-pointer"
+          >
+            Cardápio
+          </button>
+          <button
+            onClick={() => handleScroll('promocoes')}
+            className="hover:text-[#572185] transition-colors cursor-pointer"
+          >
+            Combos
+          </button>
+          <button
+            onClick={() => handleScroll('sobre')}
+            className="hover:text-[#572185] transition-colors cursor-pointer"
+          >
+            Sobre
+          </button>
+        </nav>
+
+        {/* À direita: Botão WhatsApp + Ícone discreto do carrinho */}
+        <div className="flex items-center gap-3">
           
-          {/* Logo & Marca */}
-          <a href="#inicio" className="flex items-center gap-2.5 group">
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-tr from-[#3D0C5A] via-[#6B21A8] to-[#EC4899] flex items-center justify-center shadow-md shadow-purple-900/20 group-hover:scale-105 transition-transform">
-              <span className="text-2xl" role="img" aria-label="Açaí">🍧</span>
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-extrabold text-lg sm:text-xl tracking-tight text-[#2B0938] font-['Outfit']">
-                  {STORE_CONFIG.storeName.split(' ')[0]}
-                </span>
-                <span className="font-bold text-lg sm:text-xl text-[#9333EA] font-['Outfit']">
-                  {STORE_CONFIG.storeName.split(' ').slice(1).join(' ')}
-                </span>
-              </div>
-              <p className="text-[10px] sm:text-xs text-purple-600 font-medium tracking-wide">
-                Açaiteria Artesanal & Delivery
-              </p>
-            </div>
+          {/* Botão Pedir pelo WhatsApp */}
+          <a
+            href={`https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent('Olá! Gostaria de fazer um pedido.')}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hidden sm:inline-flex items-center justify-center px-4 h-10 rounded-xl bg-[#572185] hover:bg-[#431868] text-white text-xs font-semibold tracking-wide transition-all shadow-xs"
+          >
+            Pedir pelo WhatsApp
           </a>
 
-          {/* Navegação Desktop */}
-          <nav className="hidden lg:flex items-center gap-1 bg-purple-50/70 p-1.5 rounded-full border border-purple-100">
-            {navLinks.map((link) => (
-              <button
-                key={link.label}
-                onClick={() => handleNavClick(link.href)}
-                className="px-4 py-1.5 text-xs font-semibold text-gray-700 hover:text-purple-900 hover:bg-white rounded-full transition-all duration-200 cursor-pointer"
-              >
-                {link.label}
-              </button>
-            ))}
-          </nav>
+          {/* Ícone discreto do carrinho */}
+          <button
+            onClick={() => setIsCartOpen(true)}
+            className="relative p-2.5 text-[#24152D] hover:text-[#572185] hover:bg-[#F4EFF8] rounded-xl transition-colors cursor-pointer"
+            aria-label="Ver sacola de compras"
+          >
+            <ShoppingBag className="w-5 h-5" />
+            {itemCount > 0 && (
+              <span className="absolute top-1.5 right-1.5 w-4 h-4 rounded-full bg-[#572185] text-white text-[10px] font-bold flex items-center justify-center">
+                {itemCount}
+              </span>
+            )}
+          </button>
 
-          {/* Ações / WhatsApp / Carrinho */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            
-            {/* Botão Guia do Lojista / Planilha (Discreto) */}
-            <button
-              onClick={onOpenSheetsGuide}
-              title="Gerenciar Cardápio / Google Sheets"
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-2 text-xs font-semibold text-purple-700 hover:text-purple-900 hover:bg-purple-100/80 rounded-xl transition-all border border-purple-200/60"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600" />
-              <span className="hidden md:inline">Admin Cardápio</span>
-            </button>
-
-            {/* Botão WhatsApp Direto */}
-            <a
-              href={`https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent('Olá! Gostaria de tirar uma dúvida sobre o cardápio.')}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 rounded-xl border border-emerald-200 transition-all"
-            >
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              <span>WhatsApp</span>
-            </a>
-
-            {/* Botão Sacola / Carrinho */}
-            <button
-              onClick={() => setIsCartOpen(true)}
-              className="relative flex items-center gap-2 bg-[#3D0C5A] hover:bg-[#2B0938] text-white px-3.5 sm:px-4 py-2 sm:py-2.5 rounded-2xl shadow-md shadow-purple-950/20 hover:shadow-lg transition-all duration-200 cursor-pointer group"
-              aria-label="Abrir carrinho de compras"
-            >
-              <div className="relative">
-                <ShoppingBag className="w-5 h-5 text-purple-200 group-hover:scale-110 transition-transform" />
-                {itemCount > 0 && (
-                  <span className="absolute -top-2 -right-2 bg-[#EC4899] text-white text-[11px] font-black w-5 h-5 rounded-full flex items-center justify-center border-2 border-white animate-bounce">
-                    {itemCount}
-                  </span>
-                )}
-              </div>
-              <div className="hidden sm:flex flex-col text-left">
-                <span className="text-[10px] text-purple-200 uppercase tracking-wider font-semibold">Minha Sacola</span>
-                <span className="text-xs font-bold text-white">
-                  {itemCount === 0 ? 'R$ 0,00' : formatCurrency(subtotal)}
-                </span>
-              </div>
-            </button>
-
-            {/* Menu Mobile Hambúrguer */}
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden p-2 text-gray-700 hover:text-purple-900 hover:bg-purple-50 rounded-xl transition-colors"
-              aria-label="Abrir menu"
-            >
-              {isMobileMenuOpen ? <X className="w-6 h-6" /> : <MenuIcon className="w-6 h-6" />}
-            </button>
-
-          </div>
+          {/* Menu Mobile Hambúrguer */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 text-[#24152D] hover:bg-[#F4EFF8] rounded-xl transition-colors"
+            aria-label="Abrir menu"
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
 
         </div>
 
-        {/* Menu Mobile Drawer */}
-        {isMobileMenuOpen && (
-          <div className="lg:hidden mt-3 pt-3 border-t border-purple-100 pb-2 space-y-1.5 animate-fadeIn">
-            {navLinks.map((link) => (
-              <button
-                key={link.label}
-                onClick={() => handleNavClick(link.href)}
-                className="w-full text-left px-4 py-2.5 text-sm font-semibold text-gray-800 hover:text-purple-700 hover:bg-purple-50 rounded-xl transition-colors flex items-center justify-between"
-              >
-                <span>{link.label}</span>
-                <span className="text-purple-300">›</span>
-              </button>
-            ))}
-            
-            <div className="pt-2 border-t border-purple-100 flex flex-col gap-2">
-              <button
-                onClick={() => {
-                  setIsMobileMenuOpen(false);
-                  onOpenSheetsGuide();
-                }}
-                className="w-full text-left px-4 py-2 text-xs font-medium text-purple-700 bg-purple-50 rounded-xl flex items-center gap-2"
-              >
-                <FileSpreadsheet className="w-4 h-4 text-purple-600" />
-                <span>Instruções do Cardápio (Google Sheets)</span>
-              </button>
-
-              <a
-                href={`https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent('Olá! Gostaria de tirar uma dúvida sobre o cardápio.')}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full text-center py-2.5 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 rounded-xl transition-all"
-              >
-                Falar com a loja no WhatsApp ({STORE_CONFIG.whatsappFormatted})
-              </a>
-            </div>
-          </div>
-        )}
-
       </div>
+
+      {/* Menu Mobile Retrátil */}
+      {mobileMenuOpen && (
+        <div className="md:hidden bg-white border-t border-[#F0EBF5] px-4 py-4 space-y-3">
+          <button
+            onClick={() => handleScroll('cardapio')}
+            className="block w-full text-left py-2 text-sm font-medium text-[#24152D] hover:text-[#572185]"
+          >
+            Cardápio
+          </button>
+          <button
+            onClick={() => handleScroll('promocoes')}
+            className="block w-full text-left py-2 text-sm font-medium text-[#24152D] hover:text-[#572185]"
+          >
+            Combos
+          </button>
+          <button
+            onClick={() => handleScroll('sobre')}
+            className="block w-full text-left py-2 text-sm font-medium text-[#24152D] hover:text-[#572185]"
+          >
+            Sobre
+          </button>
+          <div className="pt-2 border-t border-[#F0EBF5]">
+            <a
+              href={`https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent('Olá! Gostaria de fazer um pedido.')}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block w-full text-center py-2.5 rounded-xl bg-[#572185] text-white text-xs font-semibold"
+            >
+              Pedir pelo WhatsApp
+            </a>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

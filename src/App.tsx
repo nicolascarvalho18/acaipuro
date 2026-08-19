@@ -17,20 +17,17 @@ import { Testimonials } from './components/Testimonials';
 import { ContactSection } from './components/ContactSection';
 import { Footer } from './components/Footer';
 import { ToastNotification } from './components/ToastNotification';
-import { GoogleSheetsGuideModal } from './components/GoogleSheetsGuideModal';
-import { UtensilsCrossed, RefreshCw, AlertTriangle } from 'lucide-react';
+import { RefreshCw, AlertTriangle } from 'lucide-react';
 
 const MainContent: React.FC = () => {
   const { selectedProductForModal, closeProductModal } = useCart();
   
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isOnlineSource, setIsOnlineSource] = useState(false);
   const [loadError, setLoadError] = useState<string | undefined>();
   
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [isSheetsGuideOpen, setIsSheetsGuideOpen] = useState(false);
 
   const loadCatalog = async () => {
     setIsLoading(true);
@@ -38,7 +35,6 @@ const MainContent: React.FC = () => {
     try {
       const result = await fetchProducts();
       setProducts(result.products);
-      setIsOnlineSource(result.isFromGoogleSheets);
       if (result.error) {
         setLoadError(result.error);
       }
@@ -90,44 +86,41 @@ const MainContent: React.FC = () => {
   }, [products, selectedCategory, searchQuery]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#FCFAFF] text-gray-800 font-sans selection:bg-purple-500 selection:text-white">
+    <div className="min-h-screen flex flex-col bg-[#FCFAFD] text-[#24152D] font-sans">
       
       {/* Barra de Avisos Superior */}
       <AnnouncementBar />
 
       {/* Cabeçalho */}
-      <Header onOpenSheetsGuide={() => setIsSheetsGuideOpen(true)} />
+      <Header />
 
       {/* Hero Principal */}
       <Hero />
 
-      {/* Diferenciais de Qualidade */}
+      {/* Diferenciais / Sobre */}
       <Diferenciais />
 
-      {/* Promoções e Ofertas da Semana */}
+      {/* Combos e Ofertas */}
       <Promotions products={products} />
 
-      {/* Seção do Cardápio Digital Interativo */}
-      <section id="cardapio" className="py-16 bg-white relative">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      {/* Seção do Cardápio */}
+      <section id="cardapio" className="py-16 bg-white border-t border-[#F0EBF5]">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           
-          {/* Cabeçalho da Seção */}
           <div className="text-center max-w-2xl mx-auto mb-10">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-purple-100 text-purple-800 text-xs font-bold uppercase tracking-wider mb-2">
-              <UtensilsCrossed className="w-3.5 h-3.5 text-purple-600" />
-              Cardápio Digital Interativo
-            </span>
-            <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-[#2B0938] tracking-tight font-['Outfit']">
-              Escolha e Monte do Seu Jeito
+            <p className="text-xs sm:text-sm font-medium text-[#6B6471] uppercase tracking-wide mb-1">
+              Cardápio Completo
+            </p>
+            <h2 className="text-2xl sm:text-3xl font-bold text-[#24152D] font-['DM_Sans'] tracking-tight">
+              Escolha seu açaí e adicionais
             </h2>
-            <p className="text-sm sm:text-base text-gray-600 mt-2">
-              Selecione seus itens favoritos, escolha adicionais e receba quentinho ou geladinho na sua casa.
+            <p className="text-xs sm:text-sm text-[#6B6471] mt-1.5">
+              Ingredientes frescos, porções generosas e montagem na hora.
             </p>
           </div>
 
-          {/* Aviso de erro suave na planilha, se houver */}
           {loadError && (
-            <div className="max-w-xl mx-auto mb-6 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 flex items-center justify-between gap-2">
+            <div className="max-w-lg mx-auto mb-6 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>{loadError}</span>
@@ -142,7 +135,6 @@ const MainContent: React.FC = () => {
             </div>
           )}
 
-          {/* Filtros de Categoria e Busca */}
           <CategoryFilter
             selectedCategory={selectedCategory}
             onSelectCategory={setSelectedCategory}
@@ -151,27 +143,25 @@ const MainContent: React.FC = () => {
             categoryCounts={categoryCounts}
           />
 
-          {/* Grid de Produtos */}
           {isLoading ? (
             <div className="py-20 flex flex-col items-center justify-center space-y-3">
-              <div className="w-12 h-12 border-4 border-purple-200 border-t-purple-600 rounded-full animate-spin"></div>
-              <p className="text-xs font-bold text-gray-500">Carregando cardápio delicioso...</p>
+              <div className="w-8 h-8 border-3 border-[#F4EFF8] border-t-[#572185] rounded-full animate-spin"></div>
+              <p className="text-xs text-[#6B6471]">Carregando cardápio...</p>
             </div>
           ) : filteredProducts.length === 0 ? (
-            <div className="py-16 text-center max-w-md mx-auto space-y-3 bg-purple-50/50 p-8 rounded-3xl border border-purple-100">
-              <div className="text-4xl">🔍</div>
-              <h3 className="text-lg font-bold text-gray-900 font-['Outfit']">Nenhum produto encontrado</h3>
-              <p className="text-xs text-gray-500">
-                Não encontramos nenhum item correspondente a "{searchQuery}". Tente buscar por outros termos como "açaí", "morango" ou "nutella".
+            <div className="py-16 text-center max-w-md mx-auto space-y-3 bg-[#FCFAFD] p-8 rounded-2xl border border-[#F0EBF5]">
+              <h3 className="text-base font-bold text-[#24152D] font-['DM_Sans']">Nenhum item encontrado</h3>
+              <p className="text-xs text-[#6B6471]">
+                Não encontramos itens para "{searchQuery}". Tente buscar por outros termos.
               </p>
               <button
                 onClick={() => {
                   setSearchQuery('');
                   setSelectedCategory('all');
                 }}
-                className="px-4 py-2 bg-[#3D0C5A] text-white text-xs font-bold rounded-xl hover:bg-[#2B0938] transition-all"
+                className="px-4 py-2 bg-[#572185] text-white text-xs font-medium rounded-xl hover:bg-[#431868] transition-all"
               >
-                Limpar filtros de busca
+                Limpar busca
               </button>
             </div>
           ) : (
@@ -185,16 +175,16 @@ const MainContent: React.FC = () => {
         </div>
       </section>
 
-      {/* Avaliações e Prova Social */}
+      {/* Avaliações */}
       <Testimonials />
 
-      {/* Localização, Horários e Contato */}
+      {/* Localização e Horários */}
       <ContactSection />
 
       {/* Rodapé */}
       <Footer />
 
-      {/* Modais e Drawers Flutuantes */}
+      {/* Modais e Drawers */}
       {selectedProductForModal && (
         <ProductModal
           product={selectedProductForModal}
@@ -202,25 +192,10 @@ const MainContent: React.FC = () => {
         />
       )}
 
-      {/* Sacola Lateral */}
       <CartDrawer />
-
-      {/* Barra Fixa Mobile */}
       <FloatingCartBar />
-
-      {/* Checkout Completo com WhatsApp */}
       <CheckoutModal />
-
-      {/* Notificações Toast */}
       <ToastNotification />
-
-      {/* Modal Guia do Lojista / Planilha Google */}
-      <GoogleSheetsGuideModal
-        isOpen={isSheetsGuideOpen}
-        onClose={() => setIsSheetsGuideOpen(false)}
-        isOnlineSource={isOnlineSource}
-        onRefreshProducts={loadCatalog}
-      />
 
     </div>
   );
