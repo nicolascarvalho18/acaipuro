@@ -150,8 +150,8 @@ const MainContent: React.FC = () => {
       {/* Barra de Avisos Superior */}
       <AnnouncementBar />
 
-      {/* Cabeçalho */}
-      <Header />
+      {/* Cabeçalho com link para o Painel do Lojista */}
+      <Header onOpenAdmin={handleOpenAdmin} />
 
       {/* Apresentação Principal (Hero) */}
       <Hero />

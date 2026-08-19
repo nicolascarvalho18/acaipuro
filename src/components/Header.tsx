@@ -2,9 +2,13 @@ import React, { useState } from 'react';
 import { STORE_CONFIG } from '../config/storeConfig';
 import { useCart } from '../contexts/CartContext';
 import { Logo } from './Logo';
-import { ShoppingBag, Menu, X } from 'lucide-react';
+import { ShoppingBag, Menu, X, Lock } from 'lucide-react';
 
-export const Header: React.FC = () => {
+interface HeaderProps {
+  onOpenAdmin?: () => void;
+}
+
+export const Header: React.FC<HeaderProps> = ({ onOpenAdmin }) => {
   const { itemCount, setIsCartOpen } = useCart();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -50,6 +54,16 @@ export const Header: React.FC = () => {
           >
             Sobre
           </button>
+          {onOpenAdmin && (
+            <button
+              onClick={onOpenAdmin}
+              className="hover:text-[#69318A] transition-colors cursor-pointer py-1 flex items-center gap-1 text-xs text-[#726C74]"
+              title="Painel do Lojista"
+            >
+              <Lock className="w-3 h-3" />
+              <span>Painel</span>
+            </button>
+          )}
         </nav>
 
         {/* Ações à Direita */}
@@ -109,12 +123,24 @@ export const Header: React.FC = () => {
           >
             Sobre
           </button>
+          {onOpenAdmin && (
+            <button
+              onClick={() => {
+                setMobileMenuOpen(false);
+                onOpenAdmin();
+              }}
+              className="block w-full text-left py-2 text-sm font-bold text-[#69318A] flex items-center gap-1.5"
+            >
+              <Lock className="w-4 h-4" />
+              <span>Painel do Lojista</span>
+            </button>
+          )}
           <div className="pt-2 border-t border-[#ECE8F0]">
             <a
               href={`https://wa.me/${STORE_CONFIG.whatsappNumber}?text=${encodeURIComponent('Olá! Gostaria de fazer um pedido.')}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="block w-full text-center py-2.5 rounded-xl bg-[#69318A] text-white text-xs font-semibold"
+              className="block w-full text-center py-2.5 rounded-xl bg-[#69318A] text-white text-xs font-semibold tracking-wide"
             >
               Pedir pelo WhatsApp
             </a>
