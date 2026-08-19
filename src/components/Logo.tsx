@@ -18,11 +18,12 @@ export const Logo: React.FC<LogoProps> = ({ variant = 'dark', className = '' }) 
 
   if (variant === 'light') {
     return (
-      <div className={`inline-flex items-center bg-white px-3.5 py-2 rounded-xl shadow-xs ${className}`}>
+      <div className={`inline-flex items-center select-none ${className}`}>
         <img
-          src="/logo.png"
+          src="/logo-light.png"
           alt="Açaí Puro Sabor • Açaí Artesanal"
-          className="h-10 sm:h-11 w-auto object-contain"
+          className="h-11 sm:h-13 w-auto object-contain"
+          loading="lazy"
         />
       </div>
     );
