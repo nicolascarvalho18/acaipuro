@@ -17,7 +17,6 @@ import {
   Banknote, 
   Send, 
   CheckCircle2,
-  Loader2,
   AlertCircle,
   Clock
 } from 'lucide-react';
@@ -58,7 +57,6 @@ export const CheckoutModal: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [completedOrder, setCompletedOrder] = useState<OrderDetails | null>(null);
-  const [notificationSent, setNotificationSent] = useState<boolean>(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -133,9 +131,14 @@ export const CheckoutModal: React.FC = () => {
       createdAt: new Date().toISOString()
     };
 
-    // 1. REGISTRO AUTOMÁTICO DO PEDIDO NA API E NOTIFICAÇÃO AO WHATSAPP DA LOJA
-    try {
-      const orderPayload = {
+    // Gera o link direto e imediato do WhatsApp da loja
+    const whatsappUrl = getWhatsAppUrl(order, STORE_CONFIG);
+
+    // 1. REGISTRO EM SEGUNDO PLANO (NÃO TRAVA A INTERFACE NEM O CLIENTE)
+    fetch('/api/orders', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
         orderNumber,
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim() || undefined,
@@ -159,71 +162,14 @@ export const CheckoutModal: React.FC = () => {
         subtotal,
         deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
         total,
-      };
+      }),
+    }).catch(e => console.warn('Background save:', e));
 
-      const orderRes = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(orderPayload),
-      });
+    // 2. DISPARO INSTANTÂNEO DO PEDIDO
+    // Abre o WhatsApp imediatamente para o lojista receber na hora sem demora
+    window.open(whatsappUrl, '_blank');
 
-      const orderData = await orderRes.json();
-      if (orderData.notification?.sent) {
-        setNotificationSent(true);
-      }
-    } catch (apiErr) {
-      console.warn('Backend order recording error (fallback to local flow):', apiErr);
-    }
-
-    // 2. FLUXO DE PAGAMENTO ONLINE OU ENTREGA
-    if (paymentMethod === 'pix' || paymentMethod === 'card_online') {
-      try {
-        const preferencePayload = {
-          orderId: orderNumber,
-          customerName: customerName.trim(),
-          customerPhone: customerPhone.trim() || undefined,
-          deliveryType,
-          address: order.address,
-          paymentType: paymentMethod,
-          items: cart.map(item => ({
-            name: item.product.name,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            totalPrice: item.totalPrice,
-            size: item.selectedSize?.ml,
-            additionals: item.selectedAdditionals?.map(a => a.additional.name),
-            notes: item.notes,
-          })),
-          subtotal,
-          deliveryFee: deliveryType === 'delivery' ? deliveryFee : 0,
-          total,
-        };
-
-        const res = await fetch('/api/payments/create-preference', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(preferencePayload),
-        });
-
-        const data = await res.json();
-
-        if (data.success && (data.initPoint || data.sandboxInitPoint)) {
-          sessionStorage.setItem(`order_${orderNumber}`, JSON.stringify(order));
-          window.location.href = data.initPoint || data.sandboxInitPoint;
-          return;
-        }
-
-        // Se Mercado Pago estiver em configuração, exibe confirmação do pedido registrado
-        setCompletedOrder({ ...order, orderId: orderNumber });
-        clearCart();
-        setIsSubmitting(false);
-        return;
-      } catch (err) {
-        console.error('Online payment error:', err);
-      }
-    }
-
-    // Pagamento na entrega ou finalização direta
+    // Atualiza o estado da tela para confirmação instantânea
     setCompletedOrder({ ...order, orderId: orderNumber });
     clearCart();
     setIsSubmitting(false);
@@ -245,10 +191,10 @@ export const CheckoutModal: React.FC = () => {
         <div className="p-4 sm:p-5 border-b border-[#ECE8F0] flex items-center justify-between bg-white shrink-0">
           <div>
             <h2 className="text-base font-bold text-[#28242A] font-['DM_Sans']">
-              {completedOrder ? 'Pedido Confirmado' : 'Finalizar Pedido'}
+              {completedOrder ? 'Pedido Enviado' : 'Finalizar Pedido'}
             </h2>
             <p className="text-xs text-[#726C74] mt-0.5">
-              {completedOrder ? 'Recebimento automático registrado' : 'Preencha seus dados para entrega'}
+              {completedOrder ? 'Pedido enviado diretamente para o WhatsApp da loja' : 'Preencha seus dados para entrega rápida'}
             </p>
           </div>
 
@@ -261,7 +207,7 @@ export const CheckoutModal: React.FC = () => {
           </button>
         </div>
 
-        {/* TELA DE CONFIRMAÇÃO DO CLIENTE */}
+        {/* TELA DE CONFIRMAÇÃO INSTANTÂNEA */}
         {completedOrder ? (
           <div className="p-6 text-center space-y-5 overflow-y-auto">
             <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-100 shadow-2xs">
@@ -270,10 +216,10 @@ export const CheckoutModal: React.FC = () => {
 
             <div className="space-y-1">
               <h3 className="text-xl font-bold text-[#28242A] font-['DM_Sans']">
-                Pedido recebido!
+                Pedido enviado com sucesso!
               </h3>
               <p className="text-xs sm:text-sm text-[#726C74]">
-                Seu pedido foi registrado com sucesso e já está sendo preparado pela açaiteria.
+                A mensagem do pedido foi enviada diretamente para o WhatsApp da loja <strong>(13) 99150-9733</strong>.
               </p>
             </div>
 
@@ -302,10 +248,10 @@ export const CheckoutModal: React.FC = () => {
                 href={getWhatsAppUrl(completedOrder, STORE_CONFIG)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="w-full h-11 bg-white hover:bg-[#F3EDF6] text-[#69318A] border border-[#ECE8F0] text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-2xs"
+                className="w-full h-11 bg-[#69318A] hover:bg-[#572185] text-white text-xs sm:text-sm font-semibold rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
               >
                 <Send className="w-4 h-4 stroke-[1.8]" />
-                <span>Falar com a loja pelo WhatsApp (Opcional)</span>
+                <span>Abrir conversa no WhatsApp</span>
               </a>
 
               <button
@@ -490,7 +436,7 @@ export const CheckoutModal: React.FC = () => {
               </div>
             )}
 
-            {/* SEÇÃO DE PAGAMENTO COM OS 3 CARDS */}
+            {/* SEÇÃO DE PAGAMENTO */}
             <div className="space-y-3 pt-3 border-t border-[#ECE8F0]">
               <h3 className="text-xs font-semibold text-[#28242A] uppercase tracking-wider">
                 Forma de Pagamento
@@ -536,7 +482,7 @@ export const CheckoutModal: React.FC = () => {
                     <span className="text-xs font-bold text-[#28242A] font-['DM_Sans']">CARTÃO</span>
                   </div>
                   <p className="text-[11px] text-[#726C74] leading-tight">
-                    Pague online pelo ambiente seguro.
+                    Pague pelo cartão de crédito/débito.
                   </p>
                 </button>
 
@@ -563,7 +509,7 @@ export const CheckoutModal: React.FC = () => {
 
               </div>
 
-              {/* Opções extras quando selecionado NA ENTREGA */}
+              {/* Opções extras para pagamento na entrega */}
               {paymentMethod === 'delivery' && (
                 <div className="p-3 bg-[#FCFAF7] rounded-xl border border-[#ECE8F0] space-y-3">
                   <p className="text-xs font-medium text-[#28242A]">Escolha como vai pagar na entrega:</p>
@@ -679,36 +625,17 @@ export const CheckoutModal: React.FC = () => {
           </div>
         )}
 
-        {/* Botão de Finalização com Texto Dinâmico */}
+        {/* Botão de Envio Instantâneo */}
         {!completedOrder && (
           <div className="p-4 sm:p-5 bg-white border-t border-[#ECE8F0] shrink-0">
             <button
               type="button"
               disabled={isSubmitting}
               onClick={handleFinishOrder}
-              className="w-full h-11 px-5 bg-[#69318A] hover:bg-[#572185] disabled:opacity-50 text-white font-semibold text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              className="w-full h-12 px-5 bg-[#69318A] hover:bg-[#572185] active:scale-[0.99] text-white font-bold text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md"
             >
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Registrando pedido...</span>
-                </>
-              ) : paymentMethod === 'pix' ? (
-                <>
-                  <QrCode className="w-4 h-4" />
-                  <span>Pagar com Pix ({formatCurrency(total)})</span>
-                </>
-              ) : paymentMethod === 'card_online' ? (
-                <>
-                  <CreditCard className="w-4 h-4" />
-                  <span>Pagar com cartão ({formatCurrency(total)})</span>
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Confirmar pedido ({formatCurrency(total)})</span>
-                </>
-              )}
+              <Send className="w-4 h-4 stroke-[2]" />
+              <span>Enviar pedido agora ({formatCurrency(total)})</span>
             </button>
           </div>
         )}
