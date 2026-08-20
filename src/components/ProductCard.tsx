@@ -38,13 +38,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product }) => {
       !product.isAvailable || !isOpen ? 'opacity-70' : ''
     }`}>
       
-      {/* Imagem com proporção uniforme */}
+      {/* Imagem com proporção uniforme 4:3 */}
       <div>
         <div className="relative aspect-[4/3] overflow-hidden bg-[#F3EDF6]">
           <img
-            src={product.image}
+            src={product.image || '/images/products/product-placeholder.webp'}
             alt={product.name}
-            className="w-full h-full object-cover"
+            onError={(e) => {
+              const target = e.target as HTMLImageElement;
+              if (target.src.endsWith('.webp')) {
+                target.src = target.src.replace('.webp', '.jpg');
+              } else {
+                target.src = '/images/products/product-placeholder.webp';
+              }
+            }}
+            className="w-full h-full object-cover object-center transition-transform duration-300 hover:scale-105"
             loading="lazy"
           />
 

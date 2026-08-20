@@ -1524,16 +1524,93 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[#726C74] font-bold mb-1">URL da Imagem</label>
-                <input
-                  type="text"
-                  value={editingProduct.image}
-                  onChange={(e) => setEditingProduct({ ...editingProduct, image: e.target.value })}
-                  className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
-                />
+              {/* Imagem do Produto */}
+              <div className="space-y-2">
+                <label className="block text-[#726C74] font-bold">Fotografia do Produto</label>
+                
+                {/* Upload Direto do Dispositivo */}
+                <div className="flex items-center gap-2">
+                  <label className="flex-1 py-2 px-3 bg-purple-50 hover:bg-purple-100 border border-purple-200 text-[#69318A] rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer transition-colors">
+                    <Download className="w-4 h-4 rotate-180" />
+                    <span>Upload Foto do Dispositivo</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          if (file.size > 5 * 1024 * 1024) {
+                            return alert('A imagem deve ter no máximo 5MB');
+                          }
+                          const reader = new FileReader();
+                          reader.onload = (loadEvt) => {
+                            if (loadEvt.target?.result) {
+                              setEditingProduct({ ...editingProduct, image: loadEvt.target.result as string });
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+
+                {/* Seleção Rápida de Fotos Padrão */}
+                <div>
+                  <label className="block text-[11px] text-[#726C74] mb-1">Ou selecione uma foto padrão oficial:</label>
+                  <select
+                    value={editingProduct.image.startsWith('/images/products/') ? editingProduct.image : ''}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setEditingProduct({ ...editingProduct, image: e.target.value });
+                      }
+                    }}
+                    className="w-full p-2 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs outline-none"
+                  >
+                    <option value="">-- Escolha uma foto do catálogo --</option>
+                    <option value="/images/products/acai-tradicional.webp">Açaí Tradicional (Puro)</option>
+                    <option value="/images/products/acai-morango-leite-po.webp">Açaí com Morango e Leite em Pó</option>
+                    <option value="/images/products/acai-banana-granola.webp">Açaí com Banana e Granola</option>
+                    <option value="/images/products/acai-creme-avela.webp">Açaí com Creme de Avelã</option>
+                    <option value="/images/products/combo-dois.webp">Combo para Dois</option>
+                    <option value="/images/products/combo-familia.webp">Combo Família</option>
+                    <option value="/images/products/barca-acai.webp">Barca de Açaí</option>
+                    <option value="/images/products/brownie.webp">Brownie Artesanal</option>
+                    <option value="/images/products/mousse-maracuja.webp">Mousse de Maracujá</option>
+                    <option value="/images/products/suco-acai.webp">Suco Natural de Açaí</option>
+                    <option value="/images/products/agua-mineral.webp">Água Mineral 500ml</option>
+                    <option value="/images/products/refrigerante.webp">Refrigerante Lata 350ml</option>
+                  </select>
+                </div>
+
+                {/* URL Manual */}
+                <div>
+                  <label className="block text-[11px] text-[#726C74] mb-1">Ou cole uma URL externa:</label>
+                  <input
+                    type="text"
+                    value={editingProduct.image}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, image: e.target.value })}
+                    placeholder="/images/products/... ou https://..."
+                    className="w-full p-2 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs outline-none"
+                  />
+                </div>
+
+                {/* Pré-visualização com Proporção 4:3 */}
                 {editingProduct.image && (
-                  <img src={editingProduct.image} alt="Preview" className="w-full h-28 object-cover rounded-xl mt-2 border border-[#ECE8F0]" />
+                  <div className="relative aspect-[4/3] rounded-xl overflow-hidden border border-[#ECE8F0] bg-gray-50">
+                    <img 
+                      src={editingProduct.image} 
+                      alt="Preview" 
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = '/images/products/product-placeholder.webp';
+                      }}
+                      className="w-full h-full object-cover object-center" 
+                    />
+                    <span className="absolute bottom-2 right-2 px-2 py-0.5 rounded bg-black/60 text-white text-[10px] font-bold">
+                      Proporção 4:3
+                    </span>
+                  </div>
                 )}
               </div>
 

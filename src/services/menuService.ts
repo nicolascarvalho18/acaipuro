@@ -39,7 +39,7 @@ export async function fetchProducts(): Promise<{ products: Product[]; isFromGoog
           category: p.category_id as ProductCategory,
           price: Number(p.price) || 0,
           promotionalPrice: p.promotional_price ? Number(p.promotional_price) : undefined,
-          image: p.image_url || 'https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=800&q=80',
+          image: p.image_url || INITIAL_PRODUCTS.find(ip => ip.id === p.id)?.image || '/images/products/product-placeholder.webp',
           isAvailable: p.is_available ?? true,
           isFeatured: p.is_featured ?? false,
           badge: p.badge || undefined,

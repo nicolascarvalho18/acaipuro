@@ -1,10 +1,11 @@
 import React from 'react';
 import { useCart } from '../contexts/CartContext';
-import { INITIAL_PRODUCTS } from '../data/mockProducts';
+import { useStore } from '../contexts/StoreContext';
 import { Clock, Truck } from 'lucide-react';
 
 export const Hero: React.FC = () => {
   const { openProductModal } = useCart();
+  const { products, storeSettings } = useStore();
 
   const handleScrollToMenu = () => {
     const el = document.getElementById('cardapio');
@@ -19,8 +20,10 @@ export const Hero: React.FC = () => {
   };
 
   const handleBuildAcai = () => {
-    const acaiTradicional = INITIAL_PRODUCTS.find(p => p.id === 'prod_acai_tradicional') || INITIAL_PRODUCTS[0];
-    openProductModal(acaiTradicional);
+    const acaiTradicional = products.find(p => p.id === 'prod_acai_tradicional') || products[0];
+    if (acaiTradicional) {
+      openProductModal(acaiTradicional);
+    }
   };
 
   return (
@@ -33,7 +36,7 @@ export const Hero: React.FC = () => {
           <div className="lg:col-span-5 space-y-5 text-left">
             
             <p className="text-xs sm:text-sm font-semibold tracking-wider text-[#726C74] uppercase">
-              Açaí preparado na hora
+              Açaí artesanal preparado na hora
             </p>
 
             <h1 className="text-3xl sm:text-4xl lg:text-[50px] xl:text-[54px] font-bold text-[#28242A] tracking-tight leading-[1.12] font-['DM_Sans']">
@@ -41,7 +44,7 @@ export const Hero: React.FC = () => {
             </h1>
 
             <p className="text-base sm:text-lg text-[#726C74] leading-[1.6] max-w-[460px] font-normal">
-              Escolha o tamanho, monte com seus acompanhamentos favoritos e faça seu pedido pelo WhatsApp.
+              Escolha o tamanho, monte com seus acompanhamentos favoritos e faça seu pedido online com entrega rápida.
             </p>
 
             {/* Botões de Ação */}
@@ -65,11 +68,11 @@ export const Hero: React.FC = () => {
             <div className="pt-5 border-t border-[#ECE8F0] flex flex-wrap items-center gap-6 text-xs sm:text-sm text-[#726C74]">
               <div className="flex items-center gap-2">
                 <Clock className="w-4 h-4 text-[#69318A] stroke-[1.8]" />
-                <span>Entrega em 30 a 45 minutos</span>
+                <span>Entrega em {storeSettings.estimatedDeliveryTime}</span>
               </div>
               <div className="flex items-center gap-2">
                 <Truck className="w-4 h-4 text-[#69318A] stroke-[1.8]" />
-                <span>Frete grátis a partir de R$ 45</span>
+                <span>Frete grátis a partir de R$ {storeSettings.freeDeliveryThreshold.toFixed(0)}</span>
               </div>
             </div>
 
@@ -79,8 +82,11 @@ export const Hero: React.FC = () => {
           <div className="lg:col-span-7">
             <div className="relative rounded-[18px] overflow-hidden bg-white border border-[#ECE8F0] shadow-xs">
               <img
-                src="https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=1200&q=85"
-                alt="Tigela de açaí artesanal com morangos frescos, banana fatiada e granola crocante"
+                src="/images/products/hero-acai.webp"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = '/images/products/hero-acai.jpg';
+                }}
+                alt="Tigela de açaí artesanal com morangos frescos, banana fatiada, granola e leite em pó"
                 className="w-full h-72 sm:h-[390px] lg:h-[450px] object-cover"
                 loading="eager"
               />

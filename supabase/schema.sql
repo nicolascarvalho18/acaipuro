@@ -58,19 +58,20 @@ CREATE TABLE IF NOT EXISTS public.products (
 -- Inserir produtos padrão com preços oficiais corretos
 INSERT INTO public.products (id, name, short_description, category_id, product_type, price, promotional_price, image_url, is_available, is_featured, badge, allows_customization, max_free_addons, sort_order)
 VALUES
-    ('prod_acai_tradicional', 'Açaí tradicional', 'Escolha o tamanho e monte com seus acompanhamentos favoritos.', 'acai', 'by_size', 16.90, NULL, 'https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=800&q=80', true, true, 'Mais pedido', true, 3, 1),
-    ('prod_acai_morango_leite_po', 'Açaí com morango e leite em pó', 'Açaí cremoso com morango, leite em pó e leite condensado.', 'acai', 'by_size', 21.90, NULL, 'https://images.unsplash.com/photo-1590301157890-4810ed352733?auto=format&fit=crop&w=800&q=80', true, true, NULL, true, 3, 2),
-    ('prod_acai_banana_granola', 'Açaí com banana e granola', 'Açaí acompanhado de banana, granola e paçoca.', 'acai', 'by_size', 19.90, NULL, 'https://images.unsplash.com/photo-1511690656952-34342bb7c2f2?auto=format&fit=crop&w=800&q=80', true, false, NULL, true, 3, 3),
-    ('prod_acai_creme_avela', 'Açaí com creme de avelã', 'Açaí com creme de avelã e chocolate crocante.', 'acai', 'by_size', 26.90, NULL, 'https://images.unsplash.com/photo-1572490122747-3968b75cc699?auto=format&fit=crop&w=800&q=80', true, false, NULL, true, 2, 4),
-    ('combo_para_dois', 'Combo para dois', 'Dois açaís de 500 ml, com três adicionais em cada.', 'combos', 'combo', 44.90, 39.90, 'https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=800&q=80', true, true, 'Oferta', true, 3, 5),
-    ('combo_familia', 'Combo família', 'Três açaís de 500 ml e uma bebida para compartilhar.', 'combos', 'combo', 68.90, NULL, 'https://images.unsplash.com/photo-1505253716362-afaea1d3d1af?auto=format&fit=crop&w=800&q=80', true, false, NULL, true, 3, 6),
-    ('prod_barca_acai', 'Barca de açaí', 'Açaí com frutas e acompanhamentos à sua escolha.', 'barcas', 'by_size', 49.90, NULL, 'https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=800&q=80', true, false, NULL, true, 4, 7),
-    ('prod_brownie_artesanal', 'Brownie artesanal', 'Brownie de chocolate com casquinha crocante.', 'sobremesas', 'simple', 12.90, NULL, 'https://images.unsplash.com/photo-1606313564200-e75d5e30476c?auto=format&fit=crop&w=800&q=80', true, false, NULL, false, 0, 8),
-    ('prod_mousse_maracuja', 'Mousse de maracujá', 'Mousse cremoso com calda de maracujá.', 'sobremesas', 'simple', 9.90, NULL, 'https://images.unsplash.com/photo-1587314168485-3236d6710814?auto=format&fit=crop&w=800&q=80', true, false, NULL, false, 0, 9),
-    ('prod_suco_acai', 'Suco natural de açaí 400 ml', 'Suco de açaí batido na hora com água ou laranja.', 'bebidas', 'simple', 14.90, NULL, 'https://images.unsplash.com/photo-1613478223719-2ab802602423?auto=format&fit=crop&w=800&q=80', true, false, NULL, false, 0, 10),
-    ('prod_agua_mineral', 'Água mineral 500 ml', 'Água mineral garrafa 500 ml gelada.', 'bebidas', 'simple', 4.50, NULL, 'https://images.unsplash.com/photo-1560023907-5f339617ea30?auto=format&fit=crop&w=800&q=80', true, false, NULL, false, 0, 11),
-    ('prod_refrigerante_lata', 'Refrigerante lata 350 ml', 'Refrigerante em lata gelado.', 'bebidas', 'simple', 6.50, NULL, 'https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=800&q=80', true, false, NULL, false, 0, 12)
+    ('prod_acai_tradicional', 'Açaí tradicional', 'Escolha o tamanho e monte com seus acompanhamentos favoritos.', 'acai', 'by_size', 16.90, NULL, '/images/products/acai-tradicional.webp', true, true, 'Mais pedido', true, 3, 1),
+    ('prod_acai_morango_leite_po', 'Açaí com morango e leite em pó', 'Açaí cremoso com morango fresco, leite em pó e leite condensado.', 'acai', 'by_size', 21.90, NULL, '/images/products/acai-morango-leite-po.webp', true, true, NULL, true, 3, 2),
+    ('prod_acai_banana_granola', 'Açaí com banana e granola', 'Açaí acompanhado de banana fatiada, granola crocante e paçoca.', 'acai', 'by_size', 19.90, NULL, '/images/products/acai-banana-granola.webp', true, false, NULL, true, 3, 3),
+    ('prod_acai_creme_avela', 'Açaí com creme de avelã', 'Açaí com creme de avelã generoso e chocolate crocante.', 'acai', 'by_size', 26.90, NULL, '/images/products/acai-creme-avela.webp', true, false, NULL, true, 2, 4),
+    ('combo_para_dois', 'Combo para dois', 'Dois açaís de 500 ml com acompanhamentos à sua escolha para compartilhar.', 'combos', 'combo', 44.90, 39.90, '/images/products/combo-dois.webp', true, true, 'Oferta', true, 3, 5),
+    ('combo_familia', 'Combo família', 'Três açaís de 500 ml e uma bebida refrescante para a família.', 'combos', 'combo', 68.90, NULL, '/images/products/combo-familia.webp', true, false, NULL, true, 3, 6),
+    ('prod_barca_acai', 'Barca de açaí', 'Barca especial recheada de açaí com morango, banana, kiwi, granola e chocolates.', 'barcas', 'by_size', 49.90, NULL, '/images/products/barca-acai.webp', true, false, NULL, true, 4, 7),
+    ('prod_brownie_artesanal', 'Brownie artesanal', 'Brownie de chocolate nobre com casquinha crocante e interior macio.', 'sobremesas', 'simple', 12.90, NULL, '/images/products/brownie.webp', true, false, NULL, false, 0, 8),
+    ('prod_mousse_maracuja', 'Mousse de maracujá', 'Mousse cremoso de maracujá com calda da fruta e sementes.', 'sobremesas', 'simple', 9.90, NULL, '/images/products/mousse-maracuja.webp', true, false, NULL, false, 0, 9),
+    ('prod_suco_acai', 'Suco natural de açaí 400 ml', 'Suco de açaí puro batido e servido bem gelado.', 'bebidas', 'simple', 14.90, NULL, '/images/products/suco-acai.webp', true, false, NULL, false, 0, 10),
+    ('prod_agua_mineral', 'Água mineral 500 ml', 'Água mineral garrafa 500 ml pura e gelada.', 'bebidas', 'simple', 4.50, NULL, '/images/products/agua-mineral.webp', true, false, NULL, false, 0, 11),
+    ('prod_refrigerante_lata', 'Refrigerante lata 350 ml', 'Refrigerante em lata 350 ml servido gelado.', 'bebidas', 'simple', 6.50, NULL, '/images/products/refrigerante.webp', true, false, NULL, false, 0, 12)
 ON CONFLICT (id) DO UPDATE SET
+    image_url = EXCLUDED.image_url,
     price = EXCLUDED.price,
     promotional_price = EXCLUDED.promotional_price,
     allows_customization = EXCLUDED.allows_customization;

@@ -10,7 +10,7 @@ interface PromotionsProps {
 export const Promotions: React.FC<PromotionsProps> = ({ products }) => {
   const { openProductModal, addToCart } = useCart();
   
-  const promoProducts = products.filter(p => p.category === 'combos' || p.isPromotion).slice(0, 3);
+  const promoProducts = products.filter(p => p.category === 'combos' || p.isPromotion || p.isFeatured).slice(0, 3);
 
   if (promoProducts.length === 0) return null;
 
@@ -20,7 +20,7 @@ export const Promotions: React.FC<PromotionsProps> = ({ products }) => {
         
         <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
           <h2 className="text-2xl sm:text-3xl font-bold text-[#28242A] font-['DM_Sans'] tracking-tight">
-            Combos da semana
+            Combos & Destaques da semana
           </h2>
           <p className="text-sm text-[#726C74] mt-1.5">
             Opções especiais para compartilhar ou aproveitar sozinho.
@@ -40,9 +40,17 @@ export const Promotions: React.FC<PromotionsProps> = ({ products }) => {
                 <div>
                   <div className="relative aspect-[16/10] overflow-hidden bg-[#F3EDF6]">
                     <img
-                      src={product.image}
+                      src={product.image || '/images/products/product-placeholder.webp'}
                       alt={product.name}
-                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        if (target.src.endsWith('.webp')) {
+                          target.src = target.src.replace('.webp', '.jpg');
+                        } else {
+                          target.src = '/images/products/product-placeholder.webp';
+                        }
+                      }}
+                      className="w-full h-full object-cover object-center"
                       loading="lazy"
                     />
                     {product.badge && (
