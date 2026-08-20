@@ -2,8 +2,8 @@
 
 export async function fetchDeliveryDrivers() {
   try {
-    let res = await fetch('/api/orders?type=delivery_drivers');
-    if (!res.ok) res = await fetch('/api/delivery/drivers');
+    let res = await fetch('/api/orders/manage?type=delivery_drivers');
+    if (!res.ok) res = await fetch('/api/orders?type=delivery_drivers');
     if (!res.ok) res = await fetch('/api/delivery?type=drivers');
     if (res.ok) {
       const data = await res.json();
@@ -17,23 +17,16 @@ export async function fetchDeliveryDrivers() {
 
 export async function loginDriver(phone: string, pin: string) {
   const payload = { action: 'driver_login', phone, pin };
-  let res = await fetch('/api/orders', {
+  let res = await fetch('/api/orders/manage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    res = await fetch('/api/delivery/drivers', {
+    res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'login', phone, pin }),
-    });
-  }
-  if (!res.ok) {
-    res = await fetch('/api/delivery', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'login', phone, pin }),
+      body: JSON.stringify(payload),
     });
   }
   return res.json();
@@ -46,8 +39,8 @@ export async function fetchDriverAssignments(driverId?: string, orderNumber?: st
     if (driverId) params.set('driverId', driverId);
     if (orderNumber) params.set('orderNumber', orderNumber);
 
-    let res = await fetch(`/api/orders?${params.toString()}`);
-    if (!res.ok) res = await fetch(`/api/delivery/assign?${params.toString()}`);
+    let res = await fetch(`/api/orders/manage?${params.toString()}`);
+    if (!res.ok) res = await fetch(`/api/orders?${params.toString()}`);
     if (!res.ok) res = await fetch(`/api/delivery?type=assign&${params.toString()}`);
     if (res.ok) {
       const data = await res.json();
@@ -61,16 +54,16 @@ export async function fetchDriverAssignments(driverId?: string, orderNumber?: st
 
 export async function createDeliveryOffer(orderNumber: string, orderId?: string, deliveryFee: number = 5.0) {
   const payload = { action: 'create_delivery_offer', orderNumber, orderId, deliveryFee };
-  let res = await fetch('/api/orders', {
+  let res = await fetch('/api/orders/manage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    res = await fetch('/api/delivery/assign', {
+    res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'create_offer', orderNumber, orderId, deliveryFee }),
+      body: JSON.stringify(payload),
     });
   }
   return res.json();
@@ -78,16 +71,16 @@ export async function createDeliveryOffer(orderNumber: string, orderId?: string,
 
 export async function acceptDeliveryOffer(driverId: string, assignmentId?: string, orderNumber?: string) {
   const payload = { action: 'accept_delivery_offer', driverId, assignmentId, orderNumber };
-  let res = await fetch('/api/orders', {
+  let res = await fetch('/api/orders/manage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    res = await fetch('/api/delivery/assign', {
+    res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'accept_offer', driverId, assignmentId, orderNumber }),
+      body: JSON.stringify(payload),
     });
   }
   return res.json();
@@ -104,13 +97,13 @@ export async function sendDriverLocation(driverId: string, lat: number, lng: num
   };
 
   try {
-    let res = await fetch('/api/orders', {
+    let res = await fetch('/api/orders/manage', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     if (!res.ok) {
-      res = await fetch('/api/delivery/location', {
+      res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -124,8 +117,8 @@ export async function sendDriverLocation(driverId: string, lat: number, lng: num
 
 export async function getDriverLocation(orderNumber: string) {
   try {
-    let res = await fetch(`/api/orders?type=driver_location&orderNumber=${encodeURIComponent(orderNumber)}`);
-    if (!res.ok) res = await fetch(`/api/delivery/location?orderNumber=${encodeURIComponent(orderNumber)}`);
+    let res = await fetch(`/api/orders/manage?type=driver_location&orderNumber=${encodeURIComponent(orderNumber)}`);
+    if (!res.ok) res = await fetch(`/api/orders?type=driver_location&orderNumber=${encodeURIComponent(orderNumber)}`);
     if (!res.ok) res = await fetch(`/api/delivery?type=location&orderNumber=${encodeURIComponent(orderNumber)}`);
     if (res.ok) {
       const data = await res.json();
@@ -145,13 +138,13 @@ export async function updateDeliveryStatus(assignmentId?: string, orderNumber?: 
     reason,
   };
 
-  let res = await fetch('/api/orders', {
+  let res = await fetch('/api/orders/manage', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
-    res = await fetch('/api/delivery/status', {
+    res = await fetch('/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
