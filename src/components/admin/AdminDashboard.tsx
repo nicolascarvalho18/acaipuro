@@ -58,6 +58,7 @@ import {
 } from 'lucide-react';
 import type { Product, CategoryInfo, AdditionalItem, ProductSize } from '../../types';
 import { AdminLiveDeliveries } from './AdminLiveDeliveries';
+import { createDeliveryOffer } from '../../services/deliveryService';
 
 export interface OrderItem {
   productId?: string;
@@ -1332,20 +1333,12 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                                   <button
                                     onClick={async () => {
                                       try {
-                                        const res = await fetch('/api/delivery/assign', {
-                                          method: 'POST',
-                                          headers: { 'Content-Type': 'application/json' },
-                                          body: JSON.stringify({
-                                            action: 'create_offer',
-                                            orderId: order.id,
-                                            orderNumber: order.order_number,
-                                            deliveryFee: order.delivery_fee || 5.00,
-                                          }),
-                                        });
-                                        const data = await res.json();
-                                        if (res.ok && data.success) {
+                                        const data = await createDeliveryOffer(order.order_number, order.id, order.delivery_fee || 5.00);
+                                        if (data && data.success) {
                                           alert(`Corrida do pedido #${order.order_number} despachada para os entregadores!`);
                                           setActiveTab('entregas_mapa');
+                                        } else {
+                                          alert(data?.error || 'Erro ao despachar corrida.');
                                         }
                                       } catch {
                                         alert('Erro ao despachar corrida.');
