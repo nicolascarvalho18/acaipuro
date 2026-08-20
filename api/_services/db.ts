@@ -178,3 +178,5 @@ export async function updateOrderStatusDb(
   }
   return null;
 }
+
+export const listOrders = listAllOrders;

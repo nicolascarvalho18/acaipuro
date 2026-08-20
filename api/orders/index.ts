@@ -361,7 +361,7 @@ export default async function handler(req: any, res: any) {
         } catch {}
       }
 
-      const { action } = body || {};
+      const action = body?.action || req.query?.action || body?.type;
 
       // 1. Login do Entregador
       if (action === 'driver_login' || action === 'login') {
