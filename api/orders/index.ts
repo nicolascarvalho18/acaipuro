@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Catálogo de preços oficiais para validação e recálculo no servidor
-const OFFICIAL_CATALOG: Record<string, { basePrice: number; promoPrice?: number; sizes?: Record<string, number>; maxFree?: number }> = {
+// Catálogo base de fallback
+const DEFAULT_CATALOG: Record<string, { basePrice: number; promoPrice?: number; sizes?: Record<string, number>; maxFree?: number }> = {
   'prod_acai_tradicional': {
     basePrice: 16.90,
     sizes: { '300 ml': 16.90, '500 ml': 21.90, '700 ml': 27.90, '1 litro': 38.90, '1 Litro': 38.90 },
@@ -44,7 +44,6 @@ const OFFICIAL_CATALOG: Record<string, { basePrice: number; promoPrice?: number;
 };
 
 let memoryOrders: any[] = [];
-let memoryCustomers: any[] = [];
 
 function normalizePhone(phone: string): string {
   const digits = String(phone || '').replace(/\D/g, '');
@@ -63,8 +62,7 @@ function getSupabaseClient() {
       return createClient(url.trim(), key.trim(), {
         auth: { persistSession: false },
       });
-    } catch (e) {
-      console.error('[Supabase Init Error]:', e);
+    } catch {
       return null;
     }
   }
@@ -85,11 +83,12 @@ export default async function handler(req: any, res: any) {
     return res.status(200).end();
   }
 
+  const supabase = getSupabaseClient();
+
   // GET: Listar Pedidos
   if (req.method === 'GET') {
     try {
       const statusFilter = req.query?.status;
-      const supabase = getSupabaseClient();
 
       if (supabase) {
         try {
@@ -116,7 +115,7 @@ export default async function handler(req: any, res: any) {
         : memoryOrders;
 
       return res.status(200).json({ success: true, orders: filtered });
-    } catch (e: any) {
+    } catch {
       return res.status(200).json({ success: true, orders: memoryOrders });
     }
   }
@@ -138,14 +137,12 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      const supabase = getSupabaseClient();
-
-      // 1. Validar se a loja está aberta no servidor
+      // 1. Validar se a loja está aberta
       if (supabase) {
         try {
           const { data: storeSettings } = await supabase
             .from('store_settings')
-            .select('is_open, paused_until')
+            .select('is_open')
             .eq('id', 'default')
             .single();
 
@@ -156,12 +153,23 @@ export default async function handler(req: any, res: any) {
               message: 'A loja está fechada e não está recebendo pedidos no momento.',
             });
           }
-        } catch (sErr) {
-          console.warn('[Store check warning]:', sErr);
-        }
+        } catch {}
       }
 
-      // 2. Recalcular e validar cada produto
+      // 2. Buscar catálogo atualizado do Supabase para validação dinâmica de preços
+      let dbProductsMap: Record<string, any> = {};
+      if (supabase) {
+        try {
+          const { data: prods } = await supabase.from('products').select('*');
+          if (prods && prods.length > 0) {
+            prods.forEach(p => {
+              dbProductsMap[p.id] = p;
+            });
+          }
+        } catch {}
+      }
+
+      // 3. Recalcular e validar cada produto
       let calculatedSubtotal = 0;
       const parsedItems = body.items.map((item: any) => {
         const qty = Math.max(1, Number(item.quantity) || 1);
@@ -171,20 +179,25 @@ export default async function handler(req: any, res: any) {
 
         let officialUnitPrice = Number(item.unitPrice) || 0;
 
-        const catalogItem = OFFICIAL_CATALOG[prodId] || Object.entries(OFFICIAL_CATALOG).find(([k, v]) => prodName.toLowerCase().includes(k.replace('prod_', '').replace('combo_', '').replace(/_/g, ' ')))?.[1];
-
-        if (catalogItem) {
-          if (sizeStr && catalogItem.sizes && catalogItem.sizes[sizeStr]) {
-            officialUnitPrice = catalogItem.sizes[sizeStr];
-          } else {
-            officialUnitPrice = catalogItem.promoPrice || catalogItem.basePrice;
+        // Se o produto está no Supabase, usa o preço atualizado pelo administrador
+        if (dbProductsMap[prodId]) {
+          const dbProd = dbProductsMap[prodId];
+          officialUnitPrice = Number(dbProd.promotional_price || dbProd.price) || officialUnitPrice;
+        } else {
+          // Fallback para catálogo
+          const catalogItem = DEFAULT_CATALOG[prodId] || Object.entries(DEFAULT_CATALOG).find(([k]) => prodName.toLowerCase().includes(k.replace('prod_', '').replace('combo_', '').replace(/_/g, ' ')))?.[1];
+          if (catalogItem) {
+            if (sizeStr && catalogItem.sizes && catalogItem.sizes[sizeStr]) {
+              officialUnitPrice = catalogItem.sizes[sizeStr];
+            } else {
+              officialUnitPrice = catalogItem.promoPrice || catalogItem.basePrice;
+            }
           }
         }
 
-        if (Array.isArray(item.additionals) && item.additionals.length > 0) {
-          if (Number(item.unitPrice) > officialUnitPrice) {
-            officialUnitPrice = Number(item.unitPrice);
-          }
+        // Se houver adicionais extras
+        if (Array.isArray(item.additionals) && item.additionals.length > 0 && Number(item.unitPrice) > officialUnitPrice) {
+          officialUnitPrice = Number(item.unitPrice);
         }
 
         const itemTotal = Number((officialUnitPrice * qty).toFixed(2));
@@ -236,7 +249,7 @@ export default async function handler(req: any, res: any) {
         updated_at: now,
       };
 
-      // 3. Cadastrar ou Atualizar Cliente Automaticamente
+      // 4. Cadastrar / Atualizar Cliente Automaticamente
       if (supabase && normalized) {
         try {
           const { data: existingCustomer } = await supabase
@@ -267,12 +280,10 @@ export default async function handler(req: any, res: any) {
                 last_order_at: now,
               });
           }
-        } catch (cErr) {
-          console.warn('[Customer auto-registration warning]:', cErr);
-        }
+        } catch {}
       }
 
-      // 4. Salvar Pedido no Supabase
+      // 5. Salvar Pedido no Supabase
       if (supabase) {
         try {
           const { data, error } = await supabase
@@ -298,7 +309,6 @@ export default async function handler(req: any, res: any) {
             .single();
 
           if (!error && data) {
-            console.log(`[Supabase] Order #${data.order_number} saved (Total: R$ ${data.total}).`);
             return res.status(201).json({
               success: true,
               orderId: data.id || data.order_number,
@@ -307,12 +317,7 @@ export default async function handler(req: any, res: any) {
               status: 'new',
             });
           }
-          if (error) {
-            console.error('[Supabase Insert Error]:', error.message);
-          }
-        } catch (supaEx: any) {
-          console.error('[Supabase Insert Exception]:', supaEx?.message || supaEx);
-        }
+        } catch {}
       }
 
       // Fallback em memória
@@ -331,7 +336,6 @@ export default async function handler(req: any, res: any) {
       });
 
     } catch (err: any) {
-      console.error('[API /orders POST Exception]:', err);
       return res.status(500).json({
         success: false,
         error: 'Erro interno ao salvar pedido.',

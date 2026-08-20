@@ -44,6 +44,8 @@ interface StoreContextType {
   updateProduct: (product: Product) => Promise<void>;
   deleteProduct: (productId: string) => Promise<void>;
   addProduct: (product: Product) => Promise<void>;
+  updateSizePrice: (sizeId: string, newPrice: number) => Promise<void>;
+  updateAddonPrice: (addonId: string, newPrice: number, isAvailable?: boolean) => Promise<void>;
 }
 
 const DEFAULT_STORE_SETTINGS: StoreSettings = {
@@ -99,131 +101,42 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isLoading, setIsLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(true);
 
-  // Carregar dados iniciais do Supabase ou cache
+  // Carregar dados de /api/catalog e Supabase
   const refreshCatalog = useCallback(async () => {
-    if (!supabase) {
-      setIsLoading(false);
-      return;
-    }
-
     try {
-      // 1. Carregar configurações da loja
-      const { data: settingsData } = await supabase
-        .from('store_settings')
-        .select('*')
-        .eq('id', 'default')
-        .single();
-
-      if (settingsData) {
-        const loadedSettings: StoreSettings = {
-          storeName: settingsData.store_name || DEFAULT_STORE_SETTINGS.storeName,
-          phone: settingsData.phone || DEFAULT_STORE_SETTINGS.phone,
-          whatsappNumber: settingsData.whatsapp_number || DEFAULT_STORE_SETTINGS.whatsappNumber,
-          address: settingsData.address || DEFAULT_STORE_SETTINGS.address,
-          openingHoursText: settingsData.opening_hours_text || DEFAULT_STORE_SETTINGS.openingHoursText,
-          isOpen: settingsData.is_open ?? true,
-          pausedUntil: settingsData.paused_until || null,
-          defaultDeliveryFee: Number(settingsData.default_delivery_fee) || 5.00,
-          freeDeliveryThreshold: Number(settingsData.free_delivery_threshold) || 45.00,
-          minOrderValue: Number(settingsData.min_order_value) || 15.00,
-          estimatedDeliveryTime: settingsData.estimated_delivery_time || '30 a 45 minutos',
-        };
-        setStoreSettings(loadedSettings);
-        try {
-          localStorage.setItem('acai_store_settings_cache', JSON.stringify(loadedSettings));
-        } catch {}
+      const res = await fetch('/api/catalog');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          if (Array.isArray(data.products) && data.products.length > 0) {
+            setProducts(data.products);
+            try {
+              localStorage.setItem('acai_admin_products', JSON.stringify(data.products));
+            } catch {}
+          }
+          if (data.storeSettings) {
+            setStoreSettings(data.storeSettings);
+            try {
+              localStorage.setItem('acai_store_settings_cache', JSON.stringify(data.storeSettings));
+            } catch {}
+          }
+          if (Array.isArray(data.sizes) && data.sizes.length > 0) {
+            setSizes(data.sizes);
+          }
+          if (Array.isArray(data.addons) && data.addons.length > 0) {
+            setAddons(data.addons);
+          }
+        }
       }
-
-      // 2. Carregar produtos
-      const { data: prodData } = await supabase
-        .from('products')
-        .select('*')
-        .eq('is_archived', false)
-        .order('sort_order', { ascending: true });
-
-      if (prodData && prodData.length > 0) {
-        const mapped: Product[] = prodData.map((p: any) => ({
-          id: p.id,
-          name: p.name,
-          description: p.short_description || p.full_description || '',
-          category: p.category_id,
-          price: Number(p.price) || 0,
-          promotionalPrice: p.promotional_price ? Number(p.promotional_price) : undefined,
-          image: p.image_url || 'https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=800&q=80',
-          isAvailable: p.is_available ?? true,
-          isFeatured: p.is_featured ?? false,
-          badge: p.badge || undefined,
-          sizes: p.category_id === 'acai' ? DEFAULT_SIZES : undefined,
-          allowsCustomization: p.allows_customization ?? (p.category_id === 'acai' || p.category_id === 'combos'),
-          maxFreeAdditionals: p.max_free_addons ?? (p.category_id === 'acai' ? 3 : 0),
-          displayOrder: p.sort_order || 1,
-        }));
-        setProducts(mapped);
-        try {
-          localStorage.setItem('acai_admin_products', JSON.stringify(mapped));
-        } catch {}
-      }
-
-      // 3. Carregar categorias
-      const { data: catData } = await supabase
-        .from('categories')
-        .select('*')
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
-
-      if (catData && catData.length > 0) {
-        setCategories(catData.map((c: any) => ({
-          id: c.id,
-          name: c.name,
-          description: c.description || '',
-          iconName: c.icon_name || 'Sparkles',
-        })));
-      }
-
-      // 4. Carregar adicionais
-      const { data: addData } = await supabase
-        .from('addons')
-        .select('*')
-        .eq('is_archived', false)
-        .order('sort_order', { ascending: true });
-
-      if (addData && addData.length > 0) {
-        setAddons(addData.map((a: any) => ({
-          id: a.id,
-          name: a.name,
-          category: a.category,
-          price: Number(a.price) || 0,
-          isFreeEligible: a.is_free_eligible ?? true,
-          isAvailable: a.is_available ?? true,
-        })));
-      }
-
-      // 5. Carregar zonas de entrega
-      const { data: zoneData } = await supabase
-        .from('delivery_zones')
-        .select('*')
-        .eq('is_active', true);
-
-      if (zoneData && zoneData.length > 0) {
-        setDeliveryZones(zoneData.map((z: any) => ({
-          id: z.id,
-          neighborhood: z.neighborhood,
-          fee: Number(z.fee) || 5.00,
-          minOrder: Number(z.min_order) || 20.00,
-          estimatedTime: z.estimated_time || '30 a 45 min',
-          isActive: z.is_active ?? true,
-        })));
-      }
-
       setIsOnline(true);
     } catch (err) {
-      console.warn('[StoreContext] Refresh error:', err);
+      console.warn('[StoreContext] Catalog fetch error:', err);
     } finally {
       setIsLoading(false);
     }
   }, []);
 
-  // Supabase Realtime Listener para sincronização cruzada de todos os dispositivos
+  // Supabase Realtime + Polling a cada 3 segundos
   useEffect(() => {
     refreshCatalog();
 
@@ -235,52 +148,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'store_settings' },
-            (payload) => {
-              if (payload.new) {
-                const s = payload.new as any;
-                setStoreSettings(prev => ({
-                  ...prev,
-                  isOpen: s.is_open ?? prev.isOpen,
-                  pausedUntil: s.paused_until,
-                  defaultDeliveryFee: Number(s.default_delivery_fee) || prev.defaultDeliveryFee,
-                  freeDeliveryThreshold: Number(s.free_delivery_threshold) || prev.freeDeliveryThreshold,
-                  storeName: s.store_name || prev.storeName,
-                }));
-              }
-            }
+            () => { refreshCatalog(); }
           )
           .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'products' },
-            (payload) => {
-              if (payload.eventType === 'UPDATE' && payload.new) {
-                const updated = payload.new as any;
-                setProducts(prev => prev.map(p => p.id === updated.id ? {
-                  ...p,
-                  name: updated.name,
-                  price: Number(updated.price) || p.price,
-                  promotionalPrice: updated.promotional_price ? Number(updated.promotional_price) : undefined,
-                  image: updated.image_url || p.image,
-                  isAvailable: updated.is_available ?? p.isAvailable,
-                } : p));
-              } else if (payload.eventType === 'INSERT' && payload.new) {
-                const inserted = payload.new as any;
-                setProducts(prev => [...prev.filter(p => p.id !== inserted.id), {
-                  id: inserted.id,
-                  name: inserted.name,
-                  description: inserted.short_description || '',
-                  category: inserted.category_id,
-                  price: Number(inserted.price) || 0,
-                  image: inserted.image_url || 'https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=800&q=80',
-                  isAvailable: inserted.is_available ?? true,
-                  isFeatured: inserted.is_featured ?? false,
-                  displayOrder: inserted.sort_order || 99,
-                }]);
-              } else if (payload.eventType === 'DELETE' && payload.old) {
-                const oldId = (payload.old as any).id;
-                setProducts(prev => prev.filter(p => p.id !== oldId));
-              }
-            }
+            () => { refreshCatalog(); }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'product_sizes' },
+            () => { refreshCatalog(); }
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'addons' },
+            () => { refreshCatalog(); }
           )
           .subscribe();
       } catch (e) {
@@ -288,8 +171,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
 
-    // Polling a cada 5 segundos como redundância
-    const interval = setInterval(refreshCatalog, 5000);
+    const interval = setInterval(refreshCatalog, 3000);
 
     return () => {
       clearInterval(interval);
@@ -299,7 +181,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, [refreshCatalog]);
 
-  // Ações Administrativas Conectadas ao Banco
+  // Ações Administrativas Persistidas no Servidor e Supabase
   const updateStoreSettings = async (newSettings: Partial<StoreSettings>) => {
     setStoreSettings(prev => {
       const updated = { ...prev, ...newSettings };
@@ -309,27 +191,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       return updated;
     });
 
-    if (supabase) {
-      try {
-        await supabase
-          .from('store_settings')
-          .update({
-            store_name: newSettings.storeName,
-            phone: newSettings.phone,
-            whatsapp_number: newSettings.whatsappNumber,
-            address: newSettings.address,
-            opening_hours_text: newSettings.openingHoursText,
-            is_open: newSettings.isOpen,
-            paused_until: newSettings.pausedUntil,
-            default_delivery_fee: newSettings.defaultDeliveryFee,
-            free_delivery_threshold: newSettings.freeDeliveryThreshold,
-            estimated_delivery_time: newSettings.estimatedDeliveryTime,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', 'default');
-      } catch (e) {
-        console.error('Update store settings Supabase error:', e);
-      }
+    try {
+      await fetch('/api/catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_store_settings', payload: newSettings }),
+      });
+    } catch (e) {
+      console.error('Update settings API error:', e);
     }
   };
 
@@ -338,78 +207,87 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await updateStoreSettings({ isOpen: open, pausedUntil: paused });
   };
 
-  const toggleProductAvailability = async (productId: string, available: boolean) => {
-    setProducts(prev => prev.map(p => p.id === productId ? { ...p, isAvailable: available } : p));
-    if (supabase) {
-      try {
-        await supabase
-          .from('products')
-          .update({ is_available: available, updated_at: new Date().toISOString() })
-          .eq('id', productId);
-      } catch (e) {
-        console.error('Toggle availability error:', e);
-      }
+  const updateProduct = async (product: Product) => {
+    setProducts(prev => prev.map(p => p.id === product.id ? product : p));
+    try {
+      localStorage.setItem('acai_admin_products', JSON.stringify(products.map(p => p.id === product.id ? product : p)));
+    } catch {}
+
+    try {
+      await fetch('/api/catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_product', payload: product }),
+      });
+    } catch (e) {
+      console.error('Update product API error:', e);
     }
   };
 
-  const updateProduct = async (product: Product) => {
-    setProducts(prev => prev.map(p => p.id === product.id ? product : p));
-    if (supabase) {
-      try {
-        await supabase
-          .from('products')
-          .update({
-            name: product.name,
-            short_description: product.description,
-            price: product.price,
-            promotional_price: product.promotionalPrice || null,
-            image_url: product.image,
-            category_id: product.category,
-            badge: product.badge || null,
-            is_available: product.isAvailable,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', product.id);
-      } catch (e) {
-        console.error('Update product error:', e);
-      }
+  const toggleProductAvailability = async (productId: string, available: boolean) => {
+    const target = products.find(p => p.id === productId);
+    if (target) {
+      await updateProduct({ ...target, isAvailable: available });
     }
   };
 
   const addProduct = async (product: Product) => {
     setProducts(prev => [...prev, product]);
-    if (supabase) {
-      try {
-        await supabase
-          .from('products')
-          .insert({
-            id: product.id,
-            name: product.name,
-            short_description: product.description,
-            price: product.price,
-            promotional_price: product.promotionalPrice || null,
-            image_url: product.image,
-            category_id: product.category,
-            badge: product.badge || null,
-            is_available: product.isAvailable,
-          });
-      } catch (e) {
-        console.error('Add product error:', e);
-      }
+    try {
+      localStorage.setItem('acai_admin_products', JSON.stringify([...products, product]));
+    } catch {}
+
+    try {
+      await fetch('/api/catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_product', payload: product }),
+      });
+    } catch (e) {
+      console.error('Add product API error:', e);
     }
   };
 
   const deleteProduct = async (productId: string) => {
     setProducts(prev => prev.filter(p => p.id !== productId));
-    if (supabase) {
-      try {
-        await supabase
-          .from('products')
-          .update({ is_archived: true, is_available: false })
-          .eq('id', productId);
-      } catch (e) {
-        console.error('Delete product error:', e);
-      }
+    try {
+      localStorage.setItem('acai_admin_products', JSON.stringify(products.filter(p => p.id !== productId)));
+    } catch {}
+
+    try {
+      await fetch('/api/catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete_product', payload: { id: productId } }),
+      });
+    } catch (e) {
+      console.error('Delete product API error:', e);
+    }
+  };
+
+  const updateSizePrice = async (sizeId: string, newPrice: number) => {
+    setSizes(prev => prev.map(s => s.id === sizeId ? { ...s, price: newPrice } : s));
+    try {
+      await fetch('/api/catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_size', payload: { id: sizeId, price: newPrice } }),
+      });
+    } catch (e) {
+      console.error('Update size API error:', e);
+    }
+  };
+
+  const updateAddonPrice = async (addonId: string, newPrice: number, isAvailable?: boolean) => {
+    setAddons(prev => prev.map(a => a.id === addonId ? { ...a, price: newPrice, isAvailable: isAvailable ?? a.isAvailable } : a));
+    try {
+      await fetch('/api/catalog', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_addon', payload: { id: addonId, price: newPrice, isAvailable } }),
+      });
+    } catch (e) {
+      console.error('Update addon API error:', e);
     }
   };
 
@@ -433,6 +311,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateProduct,
         deleteProduct,
         addProduct,
+        updateSizePrice,
+        updateAddonPrice,
       }}
     >
       {children}

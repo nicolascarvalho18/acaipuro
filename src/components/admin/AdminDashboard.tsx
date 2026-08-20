@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { formatCurrency } from '../../utils/formatters';
+import { useStore } from '../../contexts/StoreContext';
 import { supabase } from '../../services/supabaseClient';
 import { 
   LayoutDashboard,
@@ -47,7 +48,6 @@ import {
   Banknote,
   DollarSign
 } from 'lucide-react';
-import { INITIAL_PRODUCTS, CATEGORIES, ALL_ADDITIONALS, DEFAULT_SIZES } from '../../data/mockProducts';
 import type { Product, CategoryInfo, AdditionalItem, ProductSize } from '../../types';
 
 export interface OrderItem {
@@ -82,15 +82,6 @@ export interface RealOrder {
   cancellation_reason?: string;
   created_at: string;
   updated_at?: string;
-}
-
-export interface DeliveryZone {
-  id: string;
-  neighborhood: string;
-  fee: number;
-  minOrder: number;
-  estimatedTime: string;
-  isActive: boolean;
 }
 
 export interface CouponItem {
@@ -137,6 +128,26 @@ const STATUS_CONFIG: Record<RealOrder['status'], { label: string; bg: string; te
 };
 
 export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
+  const { 
+    products, 
+    categories, 
+    addons, 
+    sizes, 
+    deliveryZones, 
+    storeSettings, 
+    isOpen, 
+    pausedUntil, 
+    updateProduct, 
+    addProduct, 
+    deleteProduct, 
+    updateStoreSettings, 
+    toggleStoreOpen, 
+    toggleProductAvailability,
+    updateSizePrice,
+    updateAddonPrice,
+    refreshCatalog
+  } = useStore();
+
   const [activeTab, setActiveTab] = useState<TabType>('visao_geral');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [orders, setOrders] = useState<RealOrder[]>([]);
@@ -144,31 +155,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(true);
-
-  // Estados Gerenciáveis
-  const [products, setProducts] = useState<Product[]>(() => {
-    try {
-      const saved = localStorage.getItem('acai_admin_products');
-      return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
-    } catch {
-      return INITIAL_PRODUCTS;
-    }
-  });
-
-  const [categories, setCategories] = useState<CategoryInfo[]>(CATEGORIES.filter(c => c.id !== 'all'));
-  const [addons, setAddons] = useState<AdditionalItem[]>(ALL_ADDITIONALS);
-  const [sizes, setSizes] = useState<ProductSize[]>(DEFAULT_SIZES);
-  
-  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([
-    { id: '1', neighborhood: 'Gonzaga', fee: 4.00, minOrder: 20.00, estimatedTime: '25 a 35 min', isActive: true },
-    { id: '2', neighborhood: 'Boqueirão', fee: 5.00, minOrder: 20.00, estimatedTime: '30 a 40 min', isActive: true },
-    { id: '3', neighborhood: 'Embaré', fee: 5.00, minOrder: 20.00, estimatedTime: '30 a 45 min', isActive: true },
-    { id: '4', neighborhood: 'Ponta da Praia', fee: 6.00, minOrder: 25.00, estimatedTime: '35 a 50 min', isActive: true },
-    { id: '5', neighborhood: 'Aparecida', fee: 5.00, minOrder: 20.00, estimatedTime: '30 a 45 min', isActive: true },
-    { id: '6', neighborhood: 'Campo Grande', fee: 5.00, minOrder: 20.00, estimatedTime: '30 a 45 min', isActive: true },
-    { id: '7', neighborhood: 'Marapé', fee: 5.00, minOrder: 20.00, estimatedTime: '30 a 45 min', isActive: true },
-    { id: '8', neighborhood: 'São Vicente (Centro)', fee: 8.00, minOrder: 35.00, estimatedTime: '40 a 55 min', isActive: true },
-  ]);
 
   const [coupons, setCoupons] = useState<CouponItem[]>([
     { id: '1', code: 'PRIMEIRACOMPRA', discountType: 'fixed', discountValue: 5.00, minOrder: 30.00, isActive: true },
@@ -180,21 +166,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     { id: '1', user: 'admin@acaipuro.com.br', action: 'Sistema Iniciado', entity: 'Sistema', details: 'Painel administrativo operacional', timestamp: new Date().toLocaleTimeString('pt-BR') }
   ]);
 
-  // Configurações da Loja
-  const [storeName, setStoreName] = useState('Açaí Puro Sabor');
-  const [storePhone, setStorePhone] = useState('(13) 99150-9733');
-  const [storeWhatsApp, setStoreWhatsApp] = useState('5513991509733');
-  const [isOpenStore, setIsOpenStore] = useState(true);
-  const [pausedUntil, setPausedUntil] = useState<string | null>(null);
-  const [defaultDeliveryFee, setDefaultDeliveryFee] = useState(5.00);
-  const [freeThreshold, setFreeThreshold] = useState(45.00);
-  const [estimatedDeliveryTime, setEstimatedDeliveryTime] = useState('30 a 45 minutos');
-  const [minOrderValue, setMinOrderValue] = useState(15.00);
-
   // Modais de Edição
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
-  const [selectedOrderForDetails, setSelectedOrderForDetails] = useState<RealOrder | null>(null);
 
   const prevUnconfirmedCountRef = useRef<number>(0);
   const audioIntervalRef = useRef<any>(null);
@@ -210,13 +184,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     };
     setAuditLogs(prev => [newLog, ...prev.slice(0, 49)]);
   };
-
-  // Salvar produtos no localStorage para refletir no cardápio público
-  useEffect(() => {
-    try {
-      localStorage.setItem('acai_admin_products', JSON.stringify(products));
-    } catch {}
-  }, [products]);
 
   // Som suave de novo pedido
   const playAlertSound = useCallback(() => {
@@ -235,9 +202,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         osc.start(audioCtx.currentTime + start);
         osc.stop(audioCtx.currentTime + start + dur);
       };
-      playBeep(587.33, 0, 0.15); // D5
-      playBeep(783.99, 0.12, 0.15); // G5
-      playBeep(987.77, 0.24, 0.25); // B5
+      playBeep(587.33, 0, 0.15);
+      playBeep(783.99, 0.12, 0.15);
+      playBeep(987.77, 0.24, 0.25);
     } catch (e) {
       console.warn('Sound error:', e);
     }
@@ -310,27 +277,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
       }
     };
   }, [fetchOrders, playAlertSound]);
-
-  // Alerta sonoro repetido para pedidos pendentes
-  useEffect(() => {
-    const unconfirmed = orders.filter(o => o.status === 'new');
-    if (soundEnabled && unconfirmed.length > 0) {
-      if (!audioIntervalRef.current) {
-        audioIntervalRef.current = setInterval(playAlertSound, 10000);
-      }
-    } else {
-      if (audioIntervalRef.current) {
-        clearInterval(audioIntervalRef.current);
-        audioIntervalRef.current = null;
-      }
-    }
-    return () => {
-      if (audioIntervalRef.current) {
-        clearInterval(audioIntervalRef.current);
-        audioIntervalRef.current = null;
-      }
-    };
-  }, [orders, soundEnabled, playAlertSound]);
 
   // Atualizar Status do Pedido
   const handleUpdateStatus = async (orderId: string, newStatus: RealOrder['status'], reason?: string) => {
@@ -481,7 +427,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     logAudit('Exportação CSV', 'Relatórios', 'Relatório completo de pedidos exportado');
   };
 
-  // Itens do Menu
   const menuItems = [
     { id: 'visao_geral', label: 'Visão Geral', icon: LayoutDashboard },
     { id: 'pedidos', label: 'Pedidos em Tempo Real', icon: ShoppingBag, badge: countNew },
@@ -510,7 +455,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               <ShoppingBag className="w-5 h-5" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-sm font-bold tracking-tight truncate">{storeName}</h1>
+              <h1 className="text-sm font-bold tracking-tight truncate">{storeSettings.storeName}</h1>
               <p className="text-[11px] text-[#FBF7F1]/70">Sistema de Gestão</p>
             </div>
           </div>
@@ -547,18 +492,17 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         <div className="pt-3 border-t border-white/10 space-y-2">
           <div className="p-2.5 bg-white/5 rounded-xl border border-white/10 text-xs flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className={`w-2 h-2 rounded-full ${isOpenStore ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
-              <span className="font-semibold">{isOpenStore ? 'Loja Aberta' : 'Loja Pausada'}</span>
+              <span className={`w-2 h-2 rounded-full ${isOpen ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
+              <span className="font-semibold">{isOpen ? 'Loja Aberta' : 'Loja Pausada'}</span>
             </div>
             <button
               onClick={() => {
-                const next = !isOpenStore;
-                setIsOpenStore(next);
-                logAudit('Disponibilidade Alterada', 'Loja', next ? 'Loja Aberta' : 'Loja Fechada');
+                toggleStoreOpen(!isOpen);
+                logAudit('Disponibilidade Alterada', 'Loja', !isOpen ? 'Loja Aberta' : 'Loja Fechada');
               }}
               className="text-[11px] text-[#C9A66B] hover:underline cursor-pointer"
             >
-              {isOpenStore ? 'Pausar' : 'Abrir'}
+              {isOpen ? 'Pausar' : 'Abrir'}
             </button>
           </div>
 
@@ -572,7 +516,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         </div>
       </aside>
 
-      {/* HEADER MOBILE & DRAWER */}
+      {/* HEADER MOBILE */}
       <div className="md:hidden bg-[#30143D] text-white p-4 flex items-center justify-between shadow-md">
         <div className="flex items-center gap-2.5">
           <button 
@@ -581,7 +525,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           >
             <Menu className="w-5 h-5" />
           </button>
-          <span className="font-bold text-sm">{storeName}</span>
+          <span className="font-bold text-sm">{storeSettings.storeName}</span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -649,7 +593,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
             <h2 className="text-lg font-bold text-[#28242A] font-['DM_Sans']">
               {menuItems.find(m => m.id === activeTab)?.label}
             </h2>
-            <p className="text-xs text-[#726C74]">Cardápio e pedidos sincronizados em tempo real</p>
+            <p className="text-xs text-[#726C74]">Cardápio e preços sincronizados em tempo real com todos os clientes</p>
           </div>
 
           <div className="flex items-center gap-3">
@@ -670,7 +614,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
             </button>
 
             <button
-              onClick={fetchOrders}
+              onClick={() => {
+                fetchOrders();
+                refreshCatalog();
+              }}
               disabled={isLoading}
               className="p-2 text-[#726C74] hover:text-[#69318A] hover:bg-[#F3EDF6] rounded-xl border border-[#ECE8F0] transition-colors cursor-pointer"
               title="Atualizar dados"
@@ -680,13 +627,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         </header>
 
-        {/* ============================================================ */}
-        {/* 1. VISÃO GERAL / DASHBOARD */}
-        {/* ============================================================ */}
+        {/* 1. VISÃO GERAL */}
         {activeTab === 'visao_geral' && (
           <div className="p-4 sm:p-8 space-y-6">
-            
-            {/* Cards de Métricas Principais */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
                 <div className="flex justify-between items-center text-[#726C74] text-xs font-bold uppercase">
@@ -733,57 +676,42 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               </div>
             </div>
 
-            {/* Destaques Operacionais */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              
-              {/* Formas de Pagamento */}
               <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
                 <h3 className="text-xs font-bold text-[#726C74] uppercase tracking-wider">Vendas por Pagamento</h3>
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between items-center p-2 rounded-xl bg-[#FCFAF7] border border-[#ECE8F0]">
-                    <div className="flex items-center gap-2">
-                      <QrCode className="w-4 h-4 text-[#69318A]" />
-                      <span className="font-semibold">Pix</span>
-                    </div>
+                    <div className="flex items-center gap-2"><QrCode className="w-4 h-4 text-[#69318A]" /><span className="font-semibold">Pix</span></div>
                     <span className="font-bold text-[#28242A]">{formatCurrency(paymentBreakdown.pix)}</span>
                   </div>
                   <div className="flex justify-between items-center p-2 rounded-xl bg-[#FCFAF7] border border-[#ECE8F0]">
-                    <div className="flex items-center gap-2">
-                      <CreditCard className="w-4 h-4 text-blue-600" />
-                      <span className="font-semibold">Cartão Online</span>
-                    </div>
+                    <div className="flex items-center gap-2"><CreditCard className="w-4 h-4 text-blue-600" /><span className="font-semibold">Cartão Online</span></div>
                     <span className="font-bold text-[#28242A]">{formatCurrency(paymentBreakdown.card)}</span>
                   </div>
                   <div className="flex justify-between items-center p-2 rounded-xl bg-[#FCFAF7] border border-[#ECE8F0]">
-                    <div className="flex items-center gap-2">
-                      <Banknote className="w-4 h-4 text-emerald-600" />
-                      <span className="font-semibold">Na Entrega</span>
-                    </div>
+                    <div className="flex items-center gap-2"><Banknote className="w-4 h-4 text-emerald-600" /><span className="font-semibold">Na Entrega</span></div>
                     <span className="font-bold text-[#28242A]">{formatCurrency(paymentBreakdown.delivery)}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Produto Mais Vendido */}
               <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
                 <h3 className="text-xs font-bold text-[#726C74] uppercase tracking-wider">Campeão de Vendas</h3>
                 <div className="p-4 rounded-xl bg-purple-50 border border-purple-100 flex items-center gap-3">
                   <Flame className="w-8 h-8 text-[#69318A]" />
                   <div>
                     <span className="text-sm font-bold text-[#28242A] block">{topProduct}</span>
-                    <span className="text-[11px] text-[#726C74]">Item com maior saída hoje</span>
+                    <span className="text-[11px] text-[#726C74]">Item com maior saída</span>
                   </div>
                 </div>
               </div>
 
-              {/* Status da Loja & Ações Rápidas */}
               <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
                 <h3 className="text-xs font-bold text-[#726C74] uppercase tracking-wider">Ações de Operação</h3>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     onClick={() => {
-                      setIsOpenStore(false);
-                      setPausedUntil('30 minutos');
+                      toggleStoreOpen(false, '30 minutos');
                       logAudit('Pausa Operacional', 'Loja', 'Pausada por 30 minutos');
                     }}
                     className="p-2.5 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer text-center"
@@ -792,8 +720,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   </button>
                   <button
                     onClick={() => {
-                      setIsOpenStore(false);
-                      setPausedUntil('1 hora');
+                      toggleStoreOpen(false, '1 hora');
                       logAudit('Pausa Operacional', 'Loja', 'Pausada por 1 hora');
                     }}
                     className="p-2.5 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer text-center"
@@ -802,20 +729,17 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   </button>
                   <button
                     onClick={() => {
-                      setIsOpenStore(true);
-                      setPausedUntil(null);
+                      toggleStoreOpen(true);
                       logAudit('Reabertura', 'Loja', 'Loja reaberta para pedidos');
                     }}
                     className="col-span-2 p-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 cursor-pointer text-center"
                   >
-                    {isOpenStore ? '✓ Loja Aberta (Aceitando Pedidos)' : 'Reabrir Loja Agora'}
+                    {isOpen ? '✓ Loja Aberta (Aceitando Pedidos)' : 'Reabrir Loja Agora'}
                   </button>
                 </div>
               </div>
-
             </div>
 
-            {/* Últimos Pedidos */}
             <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="text-sm font-bold text-[#28242A]">Últimos Pedidos Recebidos</h3>
@@ -839,16 +763,12 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 </div>
               ))}
             </div>
-
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 2. PEDIDOS EM TEMPO REAL */}
-        {/* ============================================================ */}
         {activeTab === 'pedidos' && (
           <div className="p-4 sm:p-8 space-y-6">
-            {/* Filtros e Busca */}
             <div className="bg-white p-4 rounded-2xl border border-[#ECE8F0] space-y-3 shadow-xs">
               <div className="relative">
                 <Search className="w-4 h-4 text-[#726C74] absolute left-3.5 top-3 pointer-events-none" />
@@ -893,7 +813,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               </div>
             </div>
 
-            {/* Lista de Pedidos */}
             <div className="space-y-4">
               {orders
                 .filter(order => (statusFilter === 'all' || order.status === statusFilter) &&
@@ -1033,15 +952,13 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 3. CARDÁPIO / PRODUTOS (CRUD COMPLETO) */}
-        {/* ============================================================ */}
         {activeTab === 'produtos' && (
           <div className="p-4 sm:p-8 space-y-6">
             <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
               <div>
                 <h3 className="text-base font-bold text-[#28242A]">Catálogo de Produtos</h3>
-                <p className="text-xs text-[#726C74]">Crie, edite preços, fotos e controle a disponibilidade de cada item</p>
+                <p className="text-xs text-[#726C74]">Alterações de preços e produtos são sincronizadas imediatamente com todos os clientes</p>
               </div>
 
               <button
@@ -1066,7 +983,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               </button>
             </div>
 
-            {/* Grid de Produtos */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {products.map(prod => (
                 <div key={prod.id} className="bg-white rounded-2xl border border-[#ECE8F0] p-4 space-y-3 shadow-xs hover:border-[#D8CFE3] transition-all flex flex-col justify-between">
@@ -1102,8 +1018,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   <div className="pt-3 border-t border-[#ECE8F0] flex items-center justify-between">
                     <button
                       onClick={() => {
-                        const updated = products.map(p => p.id === prod.id ? { ...p, isAvailable: !p.isAvailable } : p);
-                        setProducts(updated);
+                        toggleProductAvailability(prod.id, !prod.isAvailable);
                         logAudit('Disponibilidade Produto', 'Produtos', `${prod.name} agora está ${!prod.isAvailable ? 'Disponível' : 'Esgotado'}`);
                       }}
                       className={`text-xs font-semibold px-2 py-1 rounded-lg cursor-pointer ${prod.isAvailable ? 'text-amber-700 bg-amber-50' : 'text-emerald-700 bg-emerald-50'}`}
@@ -1125,8 +1040,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                       <button
                         onClick={() => {
                           if (confirm(`Deseja remover "${prod.name}" do cardápio?`)) {
-                            const updated = products.filter(p => p.id !== prod.id);
-                            setProducts(updated);
+                            deleteProduct(prod.id);
                             logAudit('Produto Removido', 'Produtos', `Produto ${prod.name} excluído`);
                           }
                         }}
@@ -1143,9 +1057,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 4. CATEGORIAS */}
-        {/* ============================================================ */}
         {activeTab === 'categorias' && (
           <div className="p-4 sm:p-8 max-w-3xl space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex justify-between items-center">
@@ -1153,20 +1065,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 <h3 className="text-base font-bold text-[#28242A]">Categorias do Cardápio</h3>
                 <p className="text-xs text-[#726C74]">Organize as seções que os clientes veem no site</p>
               </div>
-              <button
-                onClick={() => {
-                  const name = prompt('Nome da nova categoria:');
-                  if (name) {
-                    const id = name.toLowerCase().replace(/\s+/g, '_');
-                    setCategories([...categories, { id, name, iconName: 'Sparkles', description: '' }]);
-                    logAudit('Categoria Criada', 'Categorias', `Categoria ${name} adicionada`);
-                  }
-                }}
-                className="px-3.5 py-2 bg-[#69318A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Nova Categoria</span>
-              </button>
             </div>
 
             <div className="bg-white rounded-2xl border border-[#ECE8F0] divide-y divide-[#ECE8F0]">
@@ -1179,33 +1077,18 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                       <span className="text-[#726C74]">{cat.description || 'Sem descrição'}</span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => {
-                      if (confirm(`Remover categoria "${cat.name}"?`)) {
-                        setCategories(categories.filter(c => c.id !== cat.id));
-                        logAudit('Categoria Removida', 'Categorias', `Categoria ${cat.name} excluída`);
-                      }
-                    }}
-                    className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg cursor-pointer"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 5. TAMANHOS & PREÇOS */}
-        {/* ============================================================ */}
         {activeTab === 'tamanhos' && (
           <div className="p-4 sm:p-8 max-w-3xl space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex justify-between items-center">
-              <div>
-                <h3 className="text-base font-bold text-[#28242A]">Tamanhos de Açaí</h3>
-                <p className="text-xs text-[#726C74]">Valores base aplicados aos produtos vendidos por tamanho</p>
-              </div>
+            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
+              <h3 className="text-base font-bold text-[#28242A]">Tamanhos de Açaí</h3>
+              <p className="text-xs text-[#726C74]">Valores base aplicados aos produtos vendidos por tamanho</p>
             </div>
 
             <div className="bg-white rounded-2xl border border-[#ECE8F0] divide-y divide-[#ECE8F0]">
@@ -1221,7 +1104,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                       onClick={() => {
                         const newPrice = prompt(`Novo preço para ${size.name}:`, size.price.toString());
                         if (newPrice && !isNaN(Number(newPrice))) {
-                          setSizes(sizes.map(s => s.id === size.id ? { ...s, price: Number(newPrice) } : s));
+                          updateSizePrice(size.id, Number(newPrice));
                           logAudit('Preço de Tamanho Alterado', 'Tamanhos', `${size.name} alterado para R$ ${newPrice}`);
                         }
                       }}
@@ -1236,9 +1119,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 6. ADICIONAIS & TOPPINGS */}
-        {/* ============================================================ */}
         {activeTab === 'adicionais' && (
           <div className="p-4 sm:p-8 space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex justify-between items-center">
@@ -1246,21 +1127,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 <h3 className="text-base font-bold text-[#28242A]">Adicionais e Acompanhamentos</h3>
                 <p className="text-xs text-[#726C74]">Controle de preços e disponibilidade de cada complemento</p>
               </div>
-              <button
-                onClick={() => {
-                  const name = prompt('Nome do novo adicional:');
-                  const priceStr = prompt('Preço do adicional (R$):', '3.00');
-                  if (name && priceStr) {
-                    const id = `add_${Date.now()}`;
-                    setAddons([...addons, { id, name, category: 'frutas', price: Number(priceStr) || 3.0, isFreeEligible: true }]);
-                    logAudit('Adicional Criado', 'Adicionais', `Adicional ${name} adicionado`);
-                  }
-                }}
-                className="px-3.5 py-2 bg-[#69318A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Novo Adicional</span>
-              </button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -1277,7 +1143,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                     onClick={() => {
                       const newPrice = prompt(`Novo preço para ${add.name}:`, add.price.toString());
                       if (newPrice && !isNaN(Number(newPrice))) {
-                        setAddons(addons.map(a => a.id === add.id ? { ...a, price: Number(newPrice) } : a));
+                        updateAddonPrice(add.id, Number(newPrice));
                         logAudit('Preço Adicional', 'Adicionais', `${add.name} alterado para R$ ${newPrice}`);
                       }
                     }}
@@ -1291,9 +1157,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 7. PROMOÇÕES & CUPONS */}
-        {/* ============================================================ */}
         {activeTab === 'promocoes' && (
           <div className="p-4 sm:p-8 max-w-3xl space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex justify-between items-center">
@@ -1338,9 +1202,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 8. ESTOQUE & OPERAÇÃO RÁPIDA */}
-        {/* ============================================================ */}
         {activeTab === 'estoque' && (
           <div className="p-4 sm:p-8 space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
@@ -1353,8 +1215,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 <button
                   key={prod.id}
                   onClick={() => {
-                    const updated = products.map(p => p.id === prod.id ? { ...p, isAvailable: !p.isAvailable } : p);
-                    setProducts(updated);
+                    toggleProductAvailability(prod.id, !prod.isAvailable);
                     logAudit('Operação Rápida', 'Estoque', `${prod.name} ${!prod.isAvailable ? 'ativado' : 'pausado'}`);
                   }}
                   className={`p-3.5 rounded-2xl border text-left flex flex-col justify-between h-28 transition-all cursor-pointer ${
@@ -1375,9 +1236,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 9. ENTREGAS & BAIRROS */}
-        {/* ============================================================ */}
         {activeTab === 'entregas' && (
           <div className="p-4 sm:p-8 max-w-3xl space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
@@ -1388,8 +1247,8 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   <input
                     type="number"
                     step="0.50"
-                    value={defaultDeliveryFee}
-                    onChange={(e) => setDefaultDeliveryFee(Number(e.target.value))}
+                    value={storeSettings.defaultDeliveryFee}
+                    onChange={(e) => updateStoreSettings({ defaultDeliveryFee: Number(e.target.value) })}
                     className="w-full p-2 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
                   />
                 </div>
@@ -1398,8 +1257,8 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   <input
                     type="number"
                     step="1.00"
-                    value={freeThreshold}
-                    onChange={(e) => setFreeThreshold(Number(e.target.value))}
+                    value={storeSettings.freeDeliveryThreshold}
+                    onChange={(e) => updateStoreSettings({ freeDeliveryThreshold: Number(e.target.value) })}
                     className="w-full p-2 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
                   />
                 </div>
@@ -1423,14 +1282,12 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 10. BASE DE CLIENTES */}
-        {/* ============================================================ */}
         {activeTab === 'clientes' && (
           <div className="p-4 sm:p-8 space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
               <h3 className="text-base font-bold text-[#28242A]">Base de Clientes</h3>
-              <p className="text-xs text-[#726C74]">Histórico e fidelidade dos clientes que já fizeram pedidos</p>
+              <p className="text-xs text-[#726C74]">Histórico e fidelidade dos clientes cadastrados automaticamente pelos pedidos</p>
             </div>
 
             <div className="bg-white rounded-2xl border border-[#ECE8F0] overflow-hidden shadow-xs">
@@ -1458,9 +1315,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 11. RELATÓRIOS & VENDAS */}
-        {/* ============================================================ */}
         {activeTab === 'relatorios' && (
           <div className="p-4 sm:p-8 space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex justify-between items-center">
@@ -1495,9 +1350,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 12. CONFIGURAÇÕES DA LOJA */}
-        {/* ============================================================ */}
         {activeTab === 'configuracoes' && (
           <div className="p-4 sm:p-8 max-w-2xl space-y-6">
             <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4 text-xs">
@@ -1507,9 +1360,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 <label className="block text-[#726C74] font-bold mb-1">Nome do Estabelecimento</label>
                 <input
                   type="text"
-                  value={storeName}
-                  onChange={(e) => setStoreName(e.target.value)}
-                  className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
+                  value={storeSettings.storeName}
+                  onChange={(e) => updateStoreSettings({ storeName: e.target.value })}
+                  className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none font-bold"
                 />
               </div>
 
@@ -1518,8 +1371,8 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   <label className="block text-[#726C74] font-bold mb-1">Telefone / Fixo</label>
                   <input
                     type="text"
-                    value={storePhone}
-                    onChange={(e) => setStorePhone(e.target.value)}
+                    value={storeSettings.phone}
+                    onChange={(e) => updateStoreSettings({ phone: e.target.value })}
                     className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
                   />
                 </div>
@@ -1527,8 +1380,8 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   <label className="block text-[#726C74] font-bold mb-1">WhatsApp para Atendimento</label>
                   <input
                     type="text"
-                    value={storeWhatsApp}
-                    onChange={(e) => setStoreWhatsApp(e.target.value)}
+                    value={storeSettings.whatsappNumber}
+                    onChange={(e) => updateStoreSettings({ whatsappNumber: e.target.value })}
                     className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
                   />
                 </div>
@@ -1538,15 +1391,15 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 <label className="block text-[#726C74] font-bold mb-1">Tempo Estimado de Entrega</label>
                 <input
                   type="text"
-                  value={estimatedDeliveryTime}
-                  onChange={(e) => setEstimatedDeliveryTime(e.target.value)}
+                  value={storeSettings.estimatedDeliveryTime}
+                  onChange={(e) => updateStoreSettings({ estimatedDeliveryTime: e.target.value })}
                   className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
                 />
               </div>
 
               <button
                 onClick={() => {
-                  alert('Configurações salvas com sucesso!');
+                  alert('Configurações salvas e propagadas com sucesso!');
                   logAudit('Configurações Atualizadas', 'Loja', 'Dados cadastrais da loja atualizados');
                 }}
                 className="w-full py-3 bg-[#69318A] hover:bg-[#572185] text-white font-bold rounded-xl cursor-pointer shadow-xs"
@@ -1557,9 +1410,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 13. USUÁRIOS & PERMISSÕES */}
-        {/* ============================================================ */}
         {activeTab === 'usuarios' && (
           <div className="p-4 sm:p-8 max-w-3xl space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
@@ -1586,9 +1437,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* ============================================================ */}
         {/* 14. HISTÓRICO DE AUDITORIA */}
-        {/* ============================================================ */}
         {activeTab === 'auditoria' && (
           <div className="p-4 sm:p-8 space-y-6">
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
@@ -1635,7 +1484,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   type="text"
                   value={editingProduct.name}
                   onChange={(e) => setEditingProduct({ ...editingProduct, name: e.target.value })}
-                  placeholder="Ex: Combo Família Premium"
+                  placeholder="Ex: Brownie artesanal"
                   className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none font-bold"
                 />
               </div>
@@ -1646,7 +1495,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   rows={2}
                   value={editingProduct.description}
                   onChange={(e) => setEditingProduct({ ...editingProduct, description: e.target.value })}
-                  placeholder="Descrição dos ingredientes e itens inclusos"
+                  placeholder="Descrição dos ingredientes"
                   className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none resize-none"
                 />
               </div>
@@ -1693,7 +1542,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   <label className="block text-[#726C74] font-bold mb-1">Categoria</label>
                   <select
                     value={editingProduct.category}
-                    onChange={(e) => setEditingProduct({ ...editingProduct, category: e.target.value })}
+                    onChange={(e) => setEditingProduct({ ...editingProduct, category: e.target.value as any })}
                     className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none font-semibold"
                   >
                     {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1738,10 +1587,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   if (!editingProduct.name.trim()) return alert('Informe o nome do produto');
                   const exists = products.some(p => p.id === editingProduct.id);
                   if (exists) {
-                    setProducts(products.map(p => p.id === editingProduct.id ? editingProduct : p));
+                    updateProduct(editingProduct);
                     logAudit('Produto Atualizado', 'Produtos', `Produto ${editingProduct.name} atualizado (R$ ${editingProduct.price})`);
                   } else {
-                    setProducts([...products, editingProduct]);
+                    addProduct(editingProduct);
                     logAudit('Produto Criado', 'Produtos', `Produto ${editingProduct.name} cadastrado`);
                   }
                   setIsProductModalOpen(false);
