@@ -479,5 +479,62 @@ export default async function handler(req: any, res: any) {
     }
   }
 
+  // PATCH: Atualizar Pedido
+  if (req.method === 'PATCH') {
+    try {
+      let body = req.body;
+      if (typeof body === 'string') {
+        try {
+          body = JSON.parse(body);
+        } catch {}
+      }
+
+      const { orderId, status, cancellationReason, internalNotes, isArchived } = body || {};
+      const orderIdentifier = orderId || body?.orderNumber || body?.id;
+
+      if (!orderIdentifier) {
+        return res.status(400).json({ error: 'orderId ou orderNumber é obrigatório' });
+      }
+
+      const now = new Date().toISOString();
+      const isIdUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderIdentifier);
+
+      const updateData: any = { updated_at: now };
+      if (status) updateData.status = status;
+      if (status === 'done') updateData.completed_at = now;
+      if (status === 'cancelled' && cancellationReason) updateData.cancellation_reason = cancellationReason;
+      if (internalNotes !== undefined) updateData.internal_notes = internalNotes;
+      if (isArchived !== undefined) updateData.is_archived = isArchived;
+
+      if (supabase) {
+        try {
+          let query = supabase.from('orders').update(updateData);
+          if (isIdUuid) {
+            query = query.eq('id', orderIdentifier);
+          } else {
+            query = query.eq('order_number', orderIdentifier);
+          }
+
+          const { data, error } = await query.select().maybeSingle();
+          if (!error && data) {
+            return res.status(200).json({ success: true, order: data });
+          }
+        } catch (e) {
+          console.warn('[Supabase PATCH error]:', e);
+        }
+      }
+
+      const mem = memoryOrders.find(o => o.id === orderIdentifier || o.order_number === orderIdentifier);
+      if (mem) {
+        Object.assign(mem, updateData);
+        return res.status(200).json({ success: true, order: mem });
+      }
+
+      return res.status(200).json({ success: true, order: { id: orderIdentifier, ...updateData } });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Erro ao atualizar pedido', message: err?.message });
+    }
+  }
+
   return res.status(405).json({ error: 'Method Not Allowed' });
 }

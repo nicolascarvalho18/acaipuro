@@ -220,6 +220,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
 
   const prevUnconfirmedCountRef = useRef<number>(0);
+  const recentUpdatesRef = useRef<Map<string, { status: RealOrder['status']; timestamp: number }>>(new Map());
 
   const logAudit = (action: string, entity: string, details: string) => {
     const newLog: AuditLog = {
@@ -264,13 +265,23 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
       const res = await fetch('/api/orders?includeArchived=true');
       const data = await res.json();
       if (data.success && Array.isArray(data.orders)) {
-        const newCount = data.orders.filter((o: RealOrder) => o.status === 'new' && !o.is_archived && !o.deleted_at).length;
+        const now = Date.now();
+        // Mesclar respeitando atualizações recentes locais
+        const mergedOrders = data.orders.map((fetched: RealOrder) => {
+          const recent = recentUpdatesRef.current.get(fetched.id || '') || recentUpdatesRef.current.get(fetched.order_number);
+          if (recent && (now - recent.timestamp) < 8000) {
+            return { ...fetched, status: recent.status };
+          }
+          return fetched;
+        });
+
+        const newCount = mergedOrders.filter((o: RealOrder) => o.status === 'new' && !o.is_archived && !o.deleted_at).length;
         
         if (newCount > prevUnconfirmedCountRef.current && prevUnconfirmedCountRef.current !== 0) {
           playAlertSound();
         }
         prevUnconfirmedCountRef.current = newCount;
-        setOrders(data.orders);
+        setOrders(mergedOrders);
 
         if (newCount > 0) {
           document.title = `(${newCount}) 🔔 Novo Pedido! - Açaí Puro Sabor`;
@@ -344,9 +355,37 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   // Atualizar Status do Pedido com sincronização total
   const handleUpdateStatus = async (orderId: string, newStatus: RealOrder['status'], reason?: string) => {
     try {
+      // 1. Gravar no registro recente para evitar rollback de polling
+      recentUpdatesRef.current.set(orderId, { status: newStatus, timestamp: Date.now() });
+
+      // 2. Atualizar estado otimista no React
       setOrders(prev => prev.map(o => (o.id === orderId || o.order_number === orderId) ? { ...o, status: newStatus, cancellation_reason: reason } : o));
       logAudit('Status Alterado', 'Pedidos', `Pedido #${orderId} alterado para ${newStatus}`);
 
+      // 3. Atualizar diretamente no Supabase pelo frontend se disponível
+      if (supabase) {
+        try {
+          const isIdUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId);
+          const updatePayload: any = {
+            status: newStatus,
+            updated_at: new Date().toISOString(),
+          };
+          if (newStatus === 'done') updatePayload.completed_at = new Date().toISOString();
+          if (newStatus === 'cancelled') updatePayload.cancellation_reason = reason || 'Cancelado pela loja';
+
+          let q = supabase.from('orders').update(updatePayload);
+          if (isIdUuid) {
+            q = q.eq('id', orderId);
+          } else {
+            q = q.eq('order_number', orderId);
+          }
+          await q;
+        } catch (supaErr) {
+          console.warn('[Direct Supabase update warn]:', supaErr);
+        }
+      }
+
+      // 4. Chamar endpoint do backend para histórico e notificações
       await fetch('/api/orders/update-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

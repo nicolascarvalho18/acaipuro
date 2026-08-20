@@ -146,15 +146,18 @@ export async function updateOrderStatusDb(
 
   if (supabase) {
     try {
-      const { data, error } = await supabase
-        .from('orders')
-        .update({
-          status: newStatus,
-          updated_at: now,
-        })
-        .or(`id.eq.${orderIdOrNumber},order_number.eq.${orderIdOrNumber}`)
-        .select()
-        .single();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderIdOrNumber);
+      let query = supabase.from('orders').update({
+        status: newStatus,
+        updated_at: now,
+      });
+      if (isUuid) {
+        query = query.eq('id', orderIdOrNumber);
+      } else {
+        query = query.eq('order_number', orderIdOrNumber);
+      }
+
+      const { data, error } = await query.select().maybeSingle();
 
       if (!error && data) {
         return data as DbOrder;

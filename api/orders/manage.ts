@@ -1,5 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUUID(str?: string): boolean {
+  if (!str) return false;
+  return UUID_REGEX.test(String(str).trim());
+}
+
 function getSupabaseClient() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
@@ -50,87 +56,89 @@ export default async function handler(req: any, res: any) {
 
     const supabase = getSupabaseClient();
     const now = new Date().toISOString();
+    const isIdUuid = isUUID(orderId);
 
     if (!supabase) {
       return res.status(200).json({ success: true, action, orderId });
     }
 
-    if (action === 'archive') {
-      await supabase
-        .from('orders')
-        .update({ is_archived: true, updated_at: now })
-        .or(`id.eq.${orderId},order_number.eq.${orderId}`);
+    const applyOrderFilter = (query: any) => {
+      return isIdUuid ? query.eq('id', orderId) : query.eq('order_number', orderId);
+    };
 
-      await supabase.from('audit_logs').insert({
-        user_email: adminEmail,
-        action: 'Arquivamento de Pedido',
-        entity: 'orders',
-        entity_id: orderId,
-        details: { action: 'archive' },
-      });
+    if (action === 'archive') {
+      await applyOrderFilter(supabase.from('orders').update({ is_archived: true, updated_at: now }));
+
+      try {
+        await supabase.from('audit_logs').insert({
+          user_email: adminEmail,
+          action: 'Arquivamento de Pedido',
+          entity: 'orders',
+          entity_id: orderId,
+          details: { action: 'archive' },
+        });
+      } catch {}
 
       return res.status(200).json({ success: true, message: 'Pedido arquivado com sucesso' });
     }
 
     if (action === 'unarchive') {
-      await supabase
-        .from('orders')
-        .update({ is_archived: false, updated_at: now })
-        .or(`id.eq.${orderId},order_number.eq.${orderId}`);
+      await applyOrderFilter(supabase.from('orders').update({ is_archived: false, updated_at: now }));
 
       return res.status(200).json({ success: true, message: 'Pedido desarquivado com sucesso' });
     }
 
     if (action === 'delete') {
-      await supabase
-        .from('orders')
-        .update({
+      await applyOrderFilter(
+        supabase.from('orders').update({
           deleted_at: now,
           deleted_by: adminEmail,
           updated_at: now,
         })
-        .or(`id.eq.${orderId},order_number.eq.${orderId}`);
+      );
 
-      await supabase.from('audit_logs').insert({
-        user_email: adminEmail,
-        action: 'Exclusão Lógica de Pedido',
-        entity: 'orders',
-        entity_id: orderId,
-        details: { action: 'soft_delete', deleted_by: adminEmail },
-      });
+      try {
+        await supabase.from('audit_logs').insert({
+          user_email: adminEmail,
+          action: 'Exclusão Lógica de Pedido',
+          entity: 'orders',
+          entity_id: orderId,
+          details: { action: 'soft_delete', deleted_by: adminEmail },
+        });
+      } catch {}
 
       return res.status(200).json({ success: true, message: 'Pedido excluído logicamente' });
     }
 
     if (action === 'restore') {
-      await supabase
-        .from('orders')
-        .update({
+      await applyOrderFilter(
+        supabase.from('orders').update({
           deleted_at: null,
           deleted_by: null,
           updated_at: now,
         })
-        .or(`id.eq.${orderId},order_number.eq.${orderId}`);
+      );
 
-      await supabase.from('audit_logs').insert({
-        user_email: adminEmail,
-        action: 'Restauração de Pedido Excluído',
-        entity: 'orders',
-        entity_id: orderId,
-        details: { action: 'restore' },
-      });
+      try {
+        await supabase.from('audit_logs').insert({
+          user_email: adminEmail,
+          action: 'Restauração de Pedido Excluído',
+          entity: 'orders',
+          entity_id: orderId,
+          details: { action: 'restore' },
+        });
+      } catch {}
 
       return res.status(200).json({ success: true, message: 'Pedido restaurado com sucesso' });
     }
 
     if (action === 'update_notes') {
-      await supabase
-        .from('orders')
-        .update({
+      await applyOrderFilter(
+        supabase.from('orders').update({
           internal_notes: notes || null,
           updated_at: now,
         })
-        .or(`id.eq.${orderId},order_number.eq.${orderId}`);
+      );
 
       return res.status(200).json({ success: true, message: 'Observações internas salvas' });
     }

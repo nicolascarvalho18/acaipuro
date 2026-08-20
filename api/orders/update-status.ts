@@ -1,5 +1,11 @@
 import { createClient } from '@supabase/supabase-js';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUUID(str?: string): boolean {
+  if (!str) return false;
+  return UUID_REGEX.test(String(str).trim());
+}
+
 function getSupabaseClient() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
@@ -27,7 +33,7 @@ function getNotificationMessage(status: string, orderNumber: string, reason?: st
     case 'delivering':
       return `Seu pedido #${orderNumber} saiu para entrega. Em breve chegará ao endereço informado.`;
     case 'ready_for_pickup':
-      return `Seu pedido #${orderNumber} está pronto para retirada.`;
+      return `Seu pedido #${orderNumber} está pronto para retirada no balcão.`;
     case 'done':
       return fulfillmentType === 'pickup'
         ? `Seu pedido #${orderNumber} foi retirado. Obrigado pela preferência!`
@@ -73,20 +79,28 @@ export default async function handler(req: any, res: any) {
 
     const supabase = getSupabaseClient();
     const now = new Date().toISOString();
+    const isIdUuid = isUUID(orderId);
 
     if (supabase) {
       try {
         // 1. Obter status anterior e dados do pedido
-        const { data: currentOrder } = await supabase
-          .from('orders')
-          .select('*')
-          .or(`id.eq.${orderId},order_number.eq.${orderId}`)
-          .single();
+        let selectQuery = supabase.from('orders').select('*');
+        if (isIdUuid) {
+          selectQuery = selectQuery.eq('id', orderId);
+        } else {
+          selectQuery = selectQuery.eq('order_number', orderId);
+        }
+
+        const { data: currentOrder, error: selectErr } = await selectQuery.maybeSingle();
+
+        if (selectErr) {
+          console.warn('[Supabase select error]:', selectErr);
+        }
 
         const previousStatus = currentOrder?.status || 'new';
         const fulfillmentType = currentOrder?.fulfillment_type || 'delivery';
         const orderNumber = currentOrder?.order_number || orderId;
-        const actualOrderId = currentOrder?.id || orderId;
+        const actualOrderId = isUUID(currentOrder?.id) ? currentOrder.id : (isIdUuid ? orderId : null);
 
         const updatePayload: any = {
           status,
@@ -102,56 +116,71 @@ export default async function handler(req: any, res: any) {
         }
 
         // 2. Atualizar pedido
-        const { data: updatedOrder, error: updateErr } = await supabase
-          .from('orders')
-          .update(updatePayload)
-          .or(`id.eq.${orderId},order_number.eq.${orderId}`)
-          .select()
-          .single();
+        let updateQuery = supabase.from('orders').update(updatePayload);
+        if (isIdUuid) {
+          updateQuery = updateQuery.eq('id', orderId);
+        } else {
+          updateQuery = updateQuery.eq('order_number', orderId);
+        }
+
+        const { data: updatedOrder, error: updateErr } = await updateQuery.select().maybeSingle();
 
         if (updateErr) {
           console.error('[Supabase update error]:', updateErr);
         }
 
-        // 3. Gravar no histórico de status
-        await supabase.from('order_status_history').insert({
-          order_id: actualOrderId,
-          order_number: orderNumber,
-          previous_status: previousStatus,
-          new_status: status,
-          changed_by: changedBy,
-          reason: reason || null,
-          created_at: now,
-        });
-
-        // 4. Gravar notificação profissional
         const notificationMessage = getNotificationMessage(status, orderNumber, reason, fulfillmentType);
-        await supabase.from('order_notifications').insert({
-          order_id: actualOrderId,
-          order_number: orderNumber,
-          status,
-          message: notificationMessage,
-          channel: 'app_timeline',
-          sent_at: now,
-        });
+
+        // 3. Gravar no histórico de status se tivermos o UUID ou order_number
+        try {
+          await supabase.from('order_status_history').insert({
+            order_id: actualOrderId,
+            order_number: orderNumber,
+            previous_status: previousStatus,
+            new_status: status,
+            changed_by: changedBy,
+            reason: reason || null,
+            created_at: now,
+          });
+        } catch (hErr) {
+          console.warn('[History insert error]:', hErr);
+        }
+
+        // 4. Gravar notificação
+        try {
+          await supabase.from('order_notifications').insert({
+            order_id: actualOrderId,
+            order_number: orderNumber,
+            status,
+            message: notificationMessage,
+            channel: 'app_timeline',
+            sent_at: now,
+          });
+        } catch (nErr) {
+          console.warn('[Notification insert error]:', nErr);
+        }
 
         // 5. Registrar em auditoria
-        await supabase.from('audit_logs').insert({
-          user_email: changedBy,
-          action: 'Atualização de Status do Pedido',
-          entity: 'orders',
-          entity_id: actualOrderId,
-          details: {
-            orderNumber,
-            from: previousStatus,
-            to: status,
-            reason: reason || null,
-          },
-        });
+        try {
+          await supabase.from('audit_logs').insert({
+            user_email: changedBy,
+            action: 'Atualização de Status do Pedido',
+            entity: 'orders',
+            entity_id: actualOrderId || orderNumber,
+            details: {
+              orderNumber,
+              from: previousStatus,
+              to: status,
+              reason: reason || null,
+            },
+          });
+        } catch (aErr) {
+          console.warn('[Audit insert error]:', aErr);
+        }
 
         return res.status(200).json({
           success: true,
-          order: updatedOrder || { id: orderId, status },
+          order: updatedOrder || currentOrder || { id: orderId, order_number: orderNumber, status },
           notificationMessage,
         });
       } catch (err) {
@@ -162,7 +191,7 @@ export default async function handler(req: any, res: any) {
     const fallbackMessage = getNotificationMessage(status, orderId, reason);
     return res.status(200).json({
       success: true,
-      order: { id: orderId, status },
+      order: { id: orderId, order_number: orderId, status },
       notificationMessage: fallbackMessage,
     });
   } catch (err: any) {
