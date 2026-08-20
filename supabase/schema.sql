@@ -223,9 +223,10 @@ CREATE TABLE IF NOT EXISTS public.customers (
 CREATE TABLE IF NOT EXISTS public.orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     order_number TEXT NOT NULL UNIQUE,
+    access_token TEXT NOT NULL DEFAULT encode(gen_random_bytes(16), 'hex'),
     customer_name TEXT NOT NULL,
     customer_phone TEXT,
-    fulfillment_type TEXT NOT NULL DEFAULT 'delivery',
+    fulfillment_type TEXT NOT NULL DEFAULT 'delivery' CHECK (fulfillment_type IN ('delivery', 'pickup')),
     street TEXT,
     number TEXT,
     neighborhood TEXT,
@@ -235,14 +236,70 @@ CREATE TABLE IF NOT EXISTS public.orders (
     delivery_fee NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     total NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
     payment_method TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'confirmed', 'preparing', 'delivering', 'done', 'cancelled')),
+    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN ('new', 'confirmed', 'preparing', 'delivering', 'ready_for_pickup', 'done', 'cancelled')),
     notes TEXT,
     cancellation_reason TEXT,
+    internal_notes TEXT,
+    is_archived BOOLEAN NOT NULL DEFAULT false,
+    deleted_at TIMESTAMPTZ,
+    deleted_by TEXT,
+    completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 10. LOGS DE AUDITORIA
+-- 10. HISTÓRICO DE STATUS DO PEDIDO
+CREATE TABLE IF NOT EXISTS public.order_status_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE,
+    order_number TEXT NOT NULL,
+    previous_status TEXT,
+    new_status TEXT NOT NULL,
+    changed_by TEXT NOT NULL DEFAULT 'admin',
+    reason TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 11. NOTIFICAÇÕES DE PEDIDOS
+CREATE TABLE IF NOT EXISTS public.order_notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE,
+    order_number TEXT NOT NULL,
+    status TEXT NOT NULL,
+    message TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'app_timeline',
+    sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 12. SESSÕES DE CAIXA DIÁRIO
+CREATE TABLE IF NOT EXISTS public.cash_register_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    closed_at TIMESTAMPTZ,
+    opened_by TEXT NOT NULL DEFAULT 'admin',
+    closed_by TEXT,
+    initial_cash NUMERIC(10, 2) NOT NULL DEFAULT 0.00,
+    final_cash NUMERIC(10, 2),
+    calculated_cash NUMERIC(10, 2),
+    difference NUMERIC(10, 2),
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 13. MOVIMENTAÇÕES DE CAIXA (SANGRIA / REFORÇO)
+CREATE TABLE IF NOT EXISTS public.cash_register_movements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID REFERENCES public.cash_register_sessions(id) ON DELETE CASCADE,
+    movement_type TEXT NOT NULL CHECK (movement_type IN ('sangria', 'suprimento', 'venda_dinheiro')),
+    amount NUMERIC(10, 2) NOT NULL,
+    description TEXT NOT NULL,
+    performed_by TEXT NOT NULL DEFAULT 'admin',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 14. LOGS DE AUDITORIA
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_email TEXT NOT NULL DEFAULT 'admin@acaipuro.com.br',
@@ -253,21 +310,25 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- 11. ÍNDICES
+-- 15. ÍNDICES
 CREATE INDEX IF NOT EXISTS idx_orders_number ON public.orders(order_number);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON public.orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_access_token ON public.orders(access_token);
 CREATE INDEX IF NOT EXISTS idx_orders_created_at ON public.orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_is_archived ON public.orders(is_archived);
+CREATE INDEX IF NOT EXISTS idx_orders_deleted_at ON public.orders(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_products_category ON public.products(category_id);
 CREATE INDEX IF NOT EXISTS idx_products_available ON public.products(is_available);
 
--- 12. HABILITAR SUPABASE REALTIME
+-- 16. HABILITAR SUPABASE REALTIME
 ALTER PUBLICATION supabase_realtime ADD TABLE public.orders;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.order_status_history;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.products;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.categories;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.addons;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.store_settings;
 
--- 13. ROW LEVEL SECURITY (RLS)
+-- 17. ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_sizes ENABLE ROW LEVEL SECURITY;
@@ -277,6 +338,10 @@ ALTER TABLE public.delivery_zones ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.store_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.customers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_status_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.order_notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cash_register_sessions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cash_register_movements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Permitir leitura pública de categorias" ON public.categories FOR SELECT USING (true);
@@ -295,5 +360,10 @@ CREATE POLICY "Permitir leitura pública de configurações" ON public.store_set
 CREATE POLICY "Permitir alteração de configurações" ON public.store_settings FOR ALL USING (true);
 
 CREATE POLICY "Permitir inserção e leitura de pedidos" ON public.orders FOR ALL USING (true);
+CREATE POLICY "Permitir histórico de pedidos" ON public.order_status_history FOR ALL USING (true);
+CREATE POLICY "Permitir notificações de pedidos" ON public.order_notifications FOR ALL USING (true);
+CREATE POLICY "Permitir sessões de caixa" ON public.cash_register_sessions FOR ALL USING (true);
+CREATE POLICY "Permitir movimentações de caixa" ON public.cash_register_movements FOR ALL USING (true);
 CREATE POLICY "Permitir leitura e escrita de clientes" ON public.customers FOR ALL USING (true);
 CREATE POLICY "Permitir leitura e escrita de auditoria" ON public.audit_logs FOR ALL USING (true);
+

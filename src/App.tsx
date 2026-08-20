@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { StoreProvider, useStore } from './contexts/StoreContext';
 import { CartProvider, useCart } from './contexts/CartContext';
-import type { Product, ProductCategory } from './types';
+import type { ProductCategory } from './types';
 import { AnnouncementBar } from './components/AnnouncementBar';
 import { Header } from './components/Header';
 import { Hero } from './components/Hero';
@@ -20,14 +20,21 @@ import { AdminLogin } from './components/admin/AdminLogin';
 import { ContactSection } from './components/ContactSection';
 import { Footer } from './components/Footer';
 import { ToastNotification } from './components/ToastNotification';
-import { RefreshCw, AlertTriangle } from 'lucide-react';
+import { Truck } from 'lucide-react';
 
 const MainContent: React.FC = () => {
-  const { selectedProductForModal, closeProductModal } = useCart();
-  const { products, isLoading, refreshCatalog, isOpen } = useStore();
+  const { 
+    selectedProductForModal, 
+    closeProductModal,
+    activeTrackingOrder,
+    openOrderTracking,
+    closeOrderTracking
+  } = useCart();
+  const { products, isLoading, isOpen } = useStore();
   
   const [selectedCategory, setSelectedCategory] = useState<ProductCategory>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(false);
 
   // Roteamento Administrativo síncrono para evitar tela branca
   const [isAdminRoute, setIsAdminRoute] = useState(() => {
@@ -42,18 +49,32 @@ const MainContent: React.FC = () => {
     return !!sessionStorage.getItem('admin_auth_token');
   });
 
-  // Acompanhamento de Pedido do Cliente
-  const [trackingOrderNumber, setTrackingOrderNumber] = useState<string | null>(null);
-
+  // Verificar URLs de rastreamento (/pedido/:orderNumber)
   useEffect(() => {
     const checkRoute = () => {
-      const path = window.location.pathname.toLowerCase();
-      const search = window.location.search.toLowerCase();
-      const isAdm = path.includes('/admin') || search.includes('admin=true') || search.includes('admin=1');
+      const path = window.location.pathname;
+      const search = new URLSearchParams(window.location.search);
+      
+      const isAdm = path.toLowerCase().includes('/admin') || search.has('admin');
       setIsAdminRoute(isAdm);
       setIsAdminAuthenticated(!!sessionStorage.getItem('admin_auth_token'));
+
+      // Verificar rota de pedido /pedido/PED-XXXX ou ?pedido=PED-XXXX
+      const pedidoMatch = path.match(/\/pedido\/([a-zA-Z0-9_-]+)/i);
+      const orderFromQuery = search.get('pedido') || search.get('order');
+      const orderNumber = pedidoMatch ? pedidoMatch[1] : orderFromQuery;
+      const token = search.get('token') || undefined;
+
+      if (orderNumber) {
+        openOrderTracking(orderNumber, token);
+        setIsTrackingModalOpen(true);
+      } else if (activeTrackingOrder) {
+        // Se já houver um pedido ativo salvo no dispositivo
+        setIsTrackingModalOpen(true);
+      }
     };
 
+    checkRoute();
     window.addEventListener('popstate', checkRoute);
     return () => window.removeEventListener('popstate', checkRoute);
   }, []);
@@ -139,6 +160,20 @@ const MainContent: React.FC = () => {
       {/* Cabeçalho com link para o Painel do Lojista */}
       <Header onOpenAdmin={handleOpenAdmin} />
 
+      {/* Banner Flutuante de Pedido Ativo (estilo iFood) */}
+      {activeTrackingOrder && !isTrackingModalOpen && (
+        <div className="fixed bottom-20 sm:bottom-6 left-4 z-40 animate-slide-up">
+          <button
+            onClick={() => setIsTrackingModalOpen(true)}
+            className="px-4 py-2.5 bg-[#69318A] hover:bg-[#572185] text-white rounded-2xl shadow-xl flex items-center gap-2.5 text-xs font-bold border border-purple-300/40 cursor-pointer transition-all hover:scale-105"
+          >
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+            <Truck className="w-4 h-4" />
+            <span>Acompanhar Pedido #{activeTrackingOrder.orderNumber}</span>
+          </button>
+        </div>
+      )}
+
       {/* Apresentação Principal (Hero) */}
       <Hero />
 
@@ -221,11 +256,12 @@ const MainContent: React.FC = () => {
       <PaymentResultModal />
       
       {/* Modal de Acompanhamento em Tempo Real do Cliente */}
-      {trackingOrderNumber && (
+      {activeTrackingOrder && (
         <OrderTrackingModal
-          orderNumber={trackingOrderNumber}
-          isOpen={!!trackingOrderNumber}
-          onClose={() => setTrackingOrderNumber(null)}
+          orderNumber={activeTrackingOrder.orderNumber}
+          token={activeTrackingOrder.token}
+          isOpen={isTrackingModalOpen}
+          onClose={() => setIsTrackingModalOpen(false)}
         />
       )}
 

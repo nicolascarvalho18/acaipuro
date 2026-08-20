@@ -29,7 +29,8 @@ export const CheckoutModal: React.FC = () => {
     subtotal, 
     deliveryFee, 
     total, 
-    clearCart 
+    clearCart,
+    openOrderTracking
   } = useCart();
 
   const { isOpen, storeSettings, deliveryZones } = useStore();
@@ -147,62 +148,66 @@ export const CheckoutModal: React.FC = () => {
         console.warn('API returned non-JSON response:', rawText);
       }
 
-      if (res.ok && data && data.success) {
-        orderSavedSuccessfully = true;
-        finalOrderNumber = data.orderNumber || orderNumber;
-      } else if (data && data.code === 'STORE_CLOSED') {
-        setErrorMessage(data.message || 'A loja está fechada e não está recebendo pedidos.');
-        setIsSubmitting(false);
-        return;
-      } else if (data && data.error) {
-        setErrorMessage(data.error);
-        setIsSubmitting(false);
-        return;
-      }
-    } catch (apiErr) {
-      console.warn('API /orders error:', apiErr);
-    }
-
-    // 2. Se a API falhou e Supabase estiver configurado no frontend
-    if (!orderSavedSuccessfully && isSupabaseConfigured() && supabase) {
-      try {
-        const { data: supaData, error: supaErr } = await supabase
-          .from('orders')
-          .insert({
-            order_number: orderNumber,
-            customer_name: orderPayload.customerName,
-            customer_phone: orderPayload.customerPhone,
-            fulfillment_type: orderPayload.fulfillmentType,
-            street: orderPayload.street,
-            number: orderPayload.number,
-            neighborhood: orderPayload.neighborhood,
-            complement: orderPayload.complement,
-            items: orderPayload.items,
-            subtotal: orderPayload.subtotal,
-            delivery_fee: orderPayload.deliveryFee,
-            total: orderPayload.total,
-            payment_method: orderPayload.paymentMethod,
-            status: 'new',
-            notes: orderPayload.notes,
-          })
-          .select()
-          .single();
-
-        if (!supaErr && supaData) {
+        if (res.ok && data && data.success) {
           orderSavedSuccessfully = true;
-          finalOrderNumber = supaData.order_number || orderNumber;
+          finalOrderNumber = data.orderNumber || orderNumber;
+          if (data.accessToken) {
+            openOrderTracking(finalOrderNumber, data.accessToken);
+          }
+        } else if (data && data.code === 'STORE_CLOSED') {
+          setErrorMessage(data.message || 'A loja está fechada e não está recebendo pedidos.');
+          setIsSubmitting(false);
+          return;
+        } else if (data && data.error) {
+          setErrorMessage(data.error);
+          setIsSubmitting(false);
+          return;
         }
-      } catch (supaEx) {
-        console.warn('Direct Supabase insert error:', supaEx);
+      } catch (apiErr) {
+        console.warn('API /orders error:', apiErr);
       }
-    }
 
-    if (orderSavedSuccessfully) {
-      setCompletedOrder({ ...orderPayload, orderId: finalOrderNumber });
-      clearCart();
-    } else if (!errorMessage) {
-      setErrorMessage('Não foi possível enviar seu pedido. Verifique sua conexão e tente novamente.');
-    }
+      // 2. Se a API falhou e Supabase estiver configurado no frontend
+      if (!orderSavedSuccessfully && isSupabaseConfigured() && supabase) {
+        try {
+          const { data: supaData, error: supaErr } = await supabase
+            .from('orders')
+            .insert({
+              order_number: orderNumber,
+              customer_name: orderPayload.customerName,
+              customer_phone: orderPayload.customerPhone,
+              fulfillment_type: orderPayload.fulfillmentType,
+              street: orderPayload.street,
+              number: orderPayload.number,
+              neighborhood: orderPayload.neighborhood,
+              complement: orderPayload.complement,
+              items: orderPayload.items,
+              subtotal: orderPayload.subtotal,
+              delivery_fee: orderPayload.deliveryFee,
+              total: orderPayload.total,
+              payment_method: orderPayload.paymentMethod,
+              status: 'new',
+              notes: orderPayload.notes,
+            })
+            .select()
+            .single();
+
+          if (!supaErr && supaData) {
+            orderSavedSuccessfully = true;
+            finalOrderNumber = supaData.order_number || orderNumber;
+            openOrderTracking(finalOrderNumber, supaData.access_token);
+          }
+        } catch (supaEx) {
+          console.warn('Direct Supabase insert error:', supaEx);
+        }
+      }
+
+      if (orderSavedSuccessfully) {
+        setCompletedOrder({ ...orderPayload, orderId: finalOrderNumber });
+        clearCart();
+      } else if (!errorMessage) {
+        setErrorMessage('Não foi possível enviar seu pedido. Verifique sua conexão e tente novamente.');
+      }
 
     setIsSubmitting(false);
   };
@@ -306,11 +311,23 @@ export const CheckoutModal: React.FC = () => {
               </div>
             </div>
 
-            <div className="pt-2">
+            <div className="pt-2 space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  handleCloseAll();
+                  openOrderTracking(completedOrder.orderId);
+                }}
+                className="w-full h-11 bg-[#69318A] hover:bg-[#572185] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md flex items-center justify-center gap-2"
+              >
+                <Truck className="w-4 h-4" />
+                <span>Acompanhar Pedido em Tempo Real</span>
+              </button>
+
               <button
                 type="button"
                 onClick={handleCloseAll}
-                className="w-full h-11 bg-[#69318A] hover:bg-[#572185] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+                className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 text-[#28242A] text-xs font-semibold rounded-xl transition-all cursor-pointer text-center"
               >
                 Voltar ao Cardápio
               </button>

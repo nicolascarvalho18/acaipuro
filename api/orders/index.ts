@@ -53,6 +53,10 @@ function normalizePhone(phone: string): string {
   return digits;
 }
 
+function generateRandomToken(): string {
+  return 'tok_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
+}
+
 function getSupabaseClient() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
@@ -89,6 +93,8 @@ export default async function handler(req: any, res: any) {
   if (req.method === 'GET') {
     try {
       const statusFilter = req.query?.status;
+      const includeArchived = req.query?.includeArchived === 'true';
+      const includeDeleted = req.query?.includeDeleted === 'true';
 
       if (supabase) {
         try {
@@ -97,7 +103,17 @@ export default async function handler(req: any, res: any) {
             .select('*')
             .order('created_at', { ascending: false });
 
-          if (statusFilter && statusFilter !== 'all') {
+          if (!includeDeleted) {
+            query = query.is('deleted_at', null);
+          }
+
+          if (!includeArchived && statusFilter !== 'archived') {
+            query = query.eq('is_archived', false);
+          } else if (statusFilter === 'archived') {
+            query = query.eq('is_archived', true);
+          }
+
+          if (statusFilter && statusFilter !== 'all' && statusFilter !== 'archived') {
             query = query.eq('status', statusFilter);
           }
 
@@ -110,9 +126,11 @@ export default async function handler(req: any, res: any) {
         }
       }
 
-      const filtered = statusFilter && statusFilter !== 'all'
-        ? memoryOrders.filter(o => o.status === statusFilter)
-        : memoryOrders;
+      let filtered = memoryOrders.filter(o => !o.deleted_at);
+      if (!includeArchived) filtered = filtered.filter(o => !o.is_archived);
+      if (statusFilter && statusFilter !== 'all') {
+        filtered = filtered.filter(o => o.status === statusFilter);
+      }
 
       return res.status(200).json({ success: true, orders: filtered });
     } catch {
@@ -225,12 +243,14 @@ export default async function handler(req: any, res: any) {
 
       const total = Number((calculatedSubtotal + deliveryFee).toFixed(2));
       const orderNumber = body.orderNumber || `PED-${Math.floor(1000 + Math.random() * 9000)}`;
+      const accessToken = generateRandomToken();
       const now = new Date().toISOString();
       const rawPhone = body.customerPhone ? String(body.customerPhone).trim() : null;
       const normalized = rawPhone ? normalizePhone(rawPhone) : null;
 
       const orderData = {
         order_number: orderNumber,
+        access_token: accessToken,
         customer_name: String(body.customerName).trim(),
         customer_phone: rawPhone,
         fulfillment_type: fulfillmentType,
@@ -245,6 +265,7 @@ export default async function handler(req: any, res: any) {
         payment_method: body.paymentMethod || 'delivery',
         status: 'new',
         notes: body.notes || body.generalNotes || null,
+        is_archived: false,
         created_at: now,
         updated_at: now,
       };
@@ -290,6 +311,7 @@ export default async function handler(req: any, res: any) {
             .from('orders')
             .insert({
               order_number: orderData.order_number,
+              access_token: orderData.access_token,
               customer_name: orderData.customer_name,
               customer_phone: orderData.customer_phone,
               fulfillment_type: orderData.fulfillment_type,
@@ -304,20 +326,47 @@ export default async function handler(req: any, res: any) {
               payment_method: orderData.payment_method,
               status: 'new',
               notes: orderData.notes,
+              is_archived: false,
             })
             .select()
             .single();
 
           if (!error && data) {
+            // Inserir histórico inicial
+            await supabase.from('order_status_history').insert({
+              order_id: data.id,
+              order_number: data.order_number,
+              previous_status: null,
+              new_status: 'new',
+              changed_by: 'cliente',
+              reason: 'Pedido finalizado pelo cliente no site',
+              created_at: now,
+            });
+
+            // Inserir notificação inicial
+            await supabase.from('order_notifications').insert({
+              order_id: data.id,
+              order_number: data.order_number,
+              status: 'new',
+              message: `Recebemos seu pedido #${data.order_number}. Em instantes vamos confirmar.`,
+              channel: 'app_timeline',
+              sent_at: now,
+            });
+
             return res.status(201).json({
               success: true,
               orderId: data.id || data.order_number,
               orderNumber: data.order_number,
+              accessToken: data.access_token,
+              trackingUrl: `/pedido/${data.order_number}?token=${data.access_token}`,
               total: data.total,
               status: 'new',
+              order: data,
             });
           }
-        } catch {}
+        } catch (dbEx) {
+          console.error('[Supabase Order Insert Exception]:', dbEx);
+        }
       }
 
       // Fallback em memória
@@ -331,8 +380,11 @@ export default async function handler(req: any, res: any) {
         success: true,
         orderId: memoryOrder.id,
         orderNumber: memoryOrder.order_number,
+        accessToken: memoryOrder.access_token,
+        trackingUrl: `/pedido/${memoryOrder.order_number}?token=${memoryOrder.access_token}`,
         total: memoryOrder.total,
         status: 'new',
+        order: memoryOrder,
       });
 
     } catch (err: any) {

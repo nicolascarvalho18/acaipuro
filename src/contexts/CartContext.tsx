@@ -28,12 +28,16 @@ interface CartContextType {
   toastMessage: string | null;
   showToast: (msg: string) => void;
   lastAddedItem: CartItem | null;
+  activeTrackingOrder: { orderNumber: string; token?: string } | null;
+  openOrderTracking: (orderNumber: string, token?: string) => void;
+  closeOrderTracking: () => void;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_KEY = 'acai_cart_items_v1';
 const LOCAL_STORAGE_DELIVERY_KEY = 'acai_delivery_type_v1';
+const LOCAL_STORAGE_TRACKING_KEY = 'active_acai_order_v1';
 
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [cart, setCart] = useState<CartItem[]>(() => {
@@ -51,6 +55,15 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return (saved === 'pickup' || saved === 'delivery') ? saved : 'delivery';
     } catch {
       return 'delivery';
+    }
+  });
+
+  const [activeTrackingOrder, setActiveTrackingOrder] = useState<{ orderNumber: string; token?: string } | null>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_TRACKING_KEY);
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
     }
   });
 
@@ -77,6 +90,18 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (e) {
       console.error('Erro ao salvar tipo de entrega:', e);
     }
+  };
+
+  const openOrderTracking = (orderNumber: string, token?: string) => {
+    const data = { orderNumber, token };
+    setActiveTrackingOrder(data);
+    try {
+      localStorage.setItem(LOCAL_STORAGE_TRACKING_KEY, JSON.stringify(data));
+    } catch {}
+  };
+
+  const closeOrderTracking = () => {
+    setActiveTrackingOrder(null);
   };
 
   const showToast = (msg: string) => {
@@ -179,7 +204,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [deliveryType, subtotal, freeDeliveryThreshold]);
 
   const total = useMemo(() => {
-    return subtotal + deliveryFee;
+    return Number((subtotal + deliveryFee).toFixed(2));
   }, [subtotal, deliveryFee]);
 
   const itemCount = useMemo(() => {
@@ -213,6 +238,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toastMessage,
         showToast,
         lastAddedItem,
+        activeTrackingOrder,
+        openOrderTracking,
+        closeOrderTracking,
       }}
     >
       {children}
@@ -223,7 +251,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 export const useCart = () => {
   const context = useContext(CartContext);
   if (!context) {
-    throw new Error('useCart deve ser utilizado dentro de um CartProvider');
+    throw new Error('useCart deve ser usado dentro de um CartProvider');
   }
   return context;
 };
