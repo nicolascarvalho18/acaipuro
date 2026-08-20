@@ -3,6 +3,7 @@ import { formatCurrency, getWhatsAppUrl } from '../utils/formatters';
 import { STORE_CONFIG } from '../config/storeConfig';
 import { supabase } from '../services/supabaseClient';
 import { LeafletMap } from './delivery/LeafletMap';
+import { getDriverLocation } from '../services/deliveryService';
 import { 
   X, 
   CheckCircle2, 
@@ -147,12 +148,9 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
 
       // Buscar localização do entregador se for entrega
       try {
-        const locRes = await fetch(`/api/delivery/location?orderNumber=${encodeURIComponent(orderNumber)}`);
-        if (locRes.ok) {
-          const locData = await locRes.json();
-          if (locData.success && locData.location) {
-            setDriverInfo(locData.location);
-          }
+        const loc = await getDriverLocation(orderNumber);
+        if (loc) {
+          setDriverInfo(loc);
         }
       } catch {}
     } catch (e) {

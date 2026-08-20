@@ -2,6 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatCurrency } from '../../utils/formatters';
 import { LeafletMap } from './LeafletMap';
 import { supabase } from '../../services/supabaseClient';
+import { 
+  fetchDriverAssignments, 
+  sendDriverLocation, 
+  loginDriver, 
+  updateDeliveryStatus 
+} from '../../services/deliveryService';
 import {
   Navigation,
   CheckCircle2,
@@ -93,20 +99,17 @@ export const DriverApp: React.FC<{ onBackToSite?: () => void }> = ({ onBackToSit
   const fetchDriverData = useCallback(async () => {
     if (!driver) return;
     try {
-      const res = await fetch(`/api/delivery/assign?driverId=${driver.id}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.success && Array.isArray(data.assignments)) {
-          // Encontrar corrida ativa do motorista
-          const active = data.assignments.find((a: any) => 
-            a.driver_id === driver.id && ['accepted', 'going_to_store', 'at_store', 'picked_up', 'in_transit'].includes(a.status)
-          );
-          setActiveRun(active || null);
+      const assignments = await fetchDriverAssignments(driver.id);
+      if (Array.isArray(assignments)) {
+        // Encontrar corrida ativa do motorista
+        const active = assignments.find((a: any) => 
+          a.driver_id === driver.id && ['accepted', 'going_to_store', 'at_store', 'picked_up', 'in_transit'].includes(a.status)
+        );
+        setActiveRun(active || null);
 
-          // Filtrar ofertas disponíveis abertas
-          const openOffers = data.assignments.filter((a: any) => a.status === 'offered' && !a.driver_id);
-          setOffers(openOffers);
-        }
+        // Filtrar ofertas disponíveis abertas
+        const openOffers = assignments.filter((a: any) => a.status === 'offered' && !a.driver_id);
+        setOffers(openOffers);
       }
     } catch (e) {
       console.warn('Error fetching driver data:', e);
@@ -125,17 +128,7 @@ export const DriverApp: React.FC<{ onBackToSite?: () => void }> = ({ onBackToSit
   const sendLocationToBackend = useCallback(async (lat: number, lng: number, accuracy?: number) => {
     if (!driver) return;
     try {
-      await fetch('/api/delivery/location', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          driverId: driver.id,
-          assignmentId: activeRun?.id,
-          latitude: lat,
-          longitude: lng,
-          accuracy,
-        }),
-      });
+      await sendDriverLocation(driver.id, lat, lng, accuracy, activeRun?.id);
       setLastGpsSentAt(new Date().toLocaleTimeString('pt-BR'));
     } catch (e) {
       console.warn('GPS send error:', e);
@@ -208,13 +201,8 @@ export const DriverApp: React.FC<{ onBackToSite?: () => void }> = ({ onBackToSit
     setIsLoggingIn(true);
     setLoginError(null);
     try {
-      const res = await fetch('/api/delivery/drivers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'login', phone, pin }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success && data.driver) {
+      const data = await loginDriver(phone, pin);
+      if (data.success && data.driver) {
         setDriver(data.driver);
         localStorage.setItem('acai_driver_session', JSON.stringify(data.driver));
       } else {
@@ -238,7 +226,7 @@ export const DriverApp: React.FC<{ onBackToSite?: () => void }> = ({ onBackToSit
     if (!driver) return;
     try {
       setDriver(prev => prev ? { ...prev, availability_status: newStatus } : null);
-      await fetch('/api/delivery/drivers', {
+      let res = await fetch('/api/delivery/drivers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -247,6 +235,17 @@ export const DriverApp: React.FC<{ onBackToSite?: () => void }> = ({ onBackToSit
           availabilityStatus: newStatus,
         }),
       });
+      if (!res.ok) {
+        await fetch('/api/delivery', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'toggle_availability',
+            driverId: driver.id,
+            availabilityStatus: newStatus,
+          }),
+        });
+      }
     } catch {}
   };
 
@@ -254,7 +253,7 @@ export const DriverApp: React.FC<{ onBackToSite?: () => void }> = ({ onBackToSit
     if (!driver) return;
     setIsLoading(true);
     try {
-      const res = await fetch('/api/delivery/assign', {
+      let res = await fetch('/api/delivery/assign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -264,6 +263,18 @@ export const DriverApp: React.FC<{ onBackToSite?: () => void }> = ({ onBackToSit
           orderNumber: assignment.order_number,
         }),
       });
+      if (!res.ok) {
+        res = await fetch('/api/delivery', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'accept_offer',
+            driverId: driver.id,
+            assignmentId: assignment.id,
+            orderNumber: assignment.order_number,
+          }),
+        });
+      }
       const data = await res.json();
       if (res.ok && data.success) {
         setActiveRun(data.assignment);
@@ -283,19 +294,8 @@ export const DriverApp: React.FC<{ onBackToSite?: () => void }> = ({ onBackToSit
     if (!activeRun) return;
     setIsLoading(true);
     try {
-      const res = await fetch('/api/delivery/status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          assignmentId: activeRun.id,
-          orderNumber: activeRun.order_number,
-          driverId: driver?.id,
-          status: newStatus,
-          reason,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
+      const data = await updateDeliveryStatus(activeRun.id, activeRun.order_number, driver?.id, newStatus, reason);
+      if (data && data.success) {
         if (newStatus === 'delivered' || newStatus === 'cancelled') {
           setActiveRun(null);
           setDriver(prev => prev ? { ...prev, availability_status: 'available' } : null);

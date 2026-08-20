@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { formatCurrency } from '../../utils/formatters';
 import { LeafletMap } from '../delivery/LeafletMap';
+import { fetchDeliveryDrivers, fetchDriverAssignments } from '../../services/deliveryService';
 import {
   Navigation,
   Bike,
@@ -56,23 +57,17 @@ export const AdminLiveDeliveries: React.FC = () => {
 
   const fetchLiveDeliveries = useCallback(async () => {
     try {
-      const [drvRes, asgRes] = await Promise.all([
-        fetch('/api/delivery/drivers'),
-        fetch('/api/delivery/assign'),
+      const [driversList, assignmentsList] = await Promise.all([
+        fetchDeliveryDrivers(),
+        fetchDriverAssignments(),
       ]);
 
-      if (drvRes.ok) {
-        const drvData = await drvRes.json();
-        if (drvData.success && Array.isArray(drvData.drivers)) {
-          setDrivers(drvData.drivers);
-        }
+      if (Array.isArray(driversList)) {
+        setDrivers(driversList);
       }
 
-      if (asgRes.ok) {
-        const asgData = await asgRes.json();
-        if (asgData.success && Array.isArray(asgData.assignments)) {
-          setDeliveries(asgData.assignments);
-        }
+      if (Array.isArray(assignmentsList)) {
+        setDeliveries(assignmentsList);
       }
     } catch (e) {
       console.warn('Error fetching live deliveries:', e);
