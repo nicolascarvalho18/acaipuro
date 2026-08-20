@@ -357,6 +357,89 @@ CREATE POLICY "Permitir leitura pública de adicionais" ON public.addons FOR SEL
 CREATE POLICY "Permitir alteração de adicionais" ON public.addons FOR ALL USING (true);
 
 CREATE POLICY "Permitir leitura pública de configurações" ON public.store_settings FOR SELECT USING (true);
+-- 18. ENTREGADORES (DELIVERY DRIVERS)
+CREATE TABLE IF NOT EXISTS public.delivery_drivers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    phone TEXT UNIQUE NOT NULL,
+    pin_code TEXT NOT NULL DEFAULT '1234',
+    photo_url TEXT,
+    vehicle_type TEXT NOT NULL DEFAULT 'motorcycle' CHECK (vehicle_type IN ('motorcycle', 'bicycle', 'car')),
+    vehicle_plate TEXT,
+    availability_status TEXT NOT NULL DEFAULT 'available' CHECK (availability_status IN ('available', 'busy', 'offline')),
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    last_latitude NUMERIC(10, 7),
+    last_longitude NUMERIC(10, 7),
+    last_accuracy NUMERIC(10, 2),
+    last_location_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Inserir entregadores padrão para teste e demonstração
+INSERT INTO public.delivery_drivers (id, name, phone, pin_code, vehicle_type, vehicle_plate, availability_status, is_active, last_latitude, last_longitude, last_location_at)
+VALUES 
+    ('11111111-1111-1111-1111-111111111111', 'Lucas Motoboy', '(13) 99111-2222', '1234', 'motorcycle', 'BRA2E19', 'available', true, -23.9618, -46.3322, NOW()),
+    ('22222222-2222-2222-2222-222222222222', 'Marcos Ciclista', '(13) 99222-3333', '1234', 'bicycle', NULL, 'available', true, -23.9580, -46.3300, NOW()),
+    ('33333333-3333-3333-3333-333333333333', 'Rafael Santos', '(13) 99333-4444', '1234', 'motorcycle', 'SPO4F88', 'available', true, -23.9650, -46.3350, NOW())
+ON CONFLICT (phone) DO UPDATE SET
+    name = EXCLUDED.name,
+    pin_code = EXCLUDED.pin_code,
+    vehicle_type = EXCLUDED.vehicle_type,
+    vehicle_plate = EXCLUDED.vehicle_plate,
+    availability_status = EXCLUDED.availability_status;
+
+-- 19. ATRIBUIÇÕES DE ENTREGA (DELIVERY ASSIGNMENTS)
+CREATE TABLE IF NOT EXISTS public.delivery_assignments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID REFERENCES public.orders(id) ON DELETE CASCADE,
+    order_number TEXT NOT NULL,
+    driver_id UUID REFERENCES public.delivery_drivers(id) ON DELETE SET NULL,
+    status TEXT NOT NULL DEFAULT 'offered' CHECK (status IN ('offered', 'accepted', 'going_to_store', 'at_store', 'picked_up', 'in_transit', 'delivered', 'cancelled')),
+    delivery_fee NUMERIC(10, 2) NOT NULL DEFAULT 5.00,
+    offered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    accepted_at TIMESTAMPTZ,
+    picked_up_at TIMESTAMPTZ,
+    started_delivery_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ,
+    cancellation_reason TEXT,
+    estimated_arrival_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 20. HISTÓRICO DE LOCALIZAÇÃO GPS DO ENTREGADOR (DELIVERY LOCATIONS)
+CREATE TABLE IF NOT EXISTS public.delivery_locations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    assignment_id UUID REFERENCES public.delivery_assignments(id) ON DELETE CASCADE,
+    driver_id UUID REFERENCES public.delivery_drivers(id) ON DELETE CASCADE,
+    latitude NUMERIC(10, 7) NOT NULL,
+    longitude NUMERIC(10, 7) NOT NULL,
+    accuracy NUMERIC(10, 2),
+    speed NUMERIC(10, 2),
+    heading NUMERIC(10, 2),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Índices para performance em tempo real
+CREATE INDEX IF NOT EXISTS idx_delivery_drivers_status ON public.delivery_drivers(availability_status, is_active);
+CREATE INDEX IF NOT EXISTS idx_delivery_assignments_order ON public.delivery_assignments(order_id, order_number);
+CREATE INDEX IF NOT EXISTS idx_delivery_assignments_driver ON public.delivery_assignments(driver_id, status);
+CREATE INDEX IF NOT EXISTS idx_delivery_locations_assignment ON public.delivery_locations(assignment_id, recorded_at DESC);
+
+-- Publicação Realtime
+ALTER PUBLICATION supabase_realtime ADD TABLE public.delivery_drivers;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.delivery_assignments;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.delivery_locations;
+
+-- RLS
+ALTER TABLE public.delivery_drivers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.delivery_assignments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.delivery_locations ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Permitir leitura e escrita de entregadores" ON public.delivery_drivers FOR ALL USING (true);
+CREATE POLICY "Permitir leitura e escrita de atribuições de entrega" ON public.delivery_assignments FOR ALL USING (true);
+CREATE POLICY "Permitir leitura e escrita de localizações" ON public.delivery_locations FOR ALL USING (true);
 CREATE POLICY "Permitir alteração de configurações" ON public.store_settings FOR ALL USING (true);
 
 CREATE POLICY "Permitir inserção e leitura de pedidos" ON public.orders FOR ALL USING (true);
@@ -366,4 +449,3 @@ CREATE POLICY "Permitir sessões de caixa" ON public.cash_register_sessions FOR 
 CREATE POLICY "Permitir movimentações de caixa" ON public.cash_register_movements FOR ALL USING (true);
 CREATE POLICY "Permitir leitura e escrita de clientes" ON public.customers FOR ALL USING (true);
 CREATE POLICY "Permitir leitura e escrita de auditoria" ON public.audit_logs FOR ALL USING (true);
-

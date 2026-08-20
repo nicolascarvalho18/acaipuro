@@ -20,6 +20,7 @@ import { AdminLogin } from './components/admin/AdminLogin';
 import { ContactSection } from './components/ContactSection';
 import { Footer } from './components/Footer';
 import { ToastNotification } from './components/ToastNotification';
+import { DriverApp } from './components/delivery/DriverApp';
 import { Truck } from 'lucide-react';
 
 const MainContent: React.FC = () => {
@@ -36,7 +37,7 @@ const MainContent: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(false);
 
-  // Roteamento Administrativo síncrono para evitar tela branca
+  // Roteamento Administrativo síncrono
   const [isAdminRoute, setIsAdminRoute] = useState(() => {
     if (typeof window === 'undefined') return false;
     const path = window.location.pathname.toLowerCase();
@@ -49,7 +50,15 @@ const MainContent: React.FC = () => {
     return !!sessionStorage.getItem('admin_auth_token');
   });
 
-  // Verificar URLs de rastreamento (/pedido/:orderNumber)
+  // Rota do Entregador (/entregador)
+  const [isDriverRoute, setIsDriverRoute] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const path = window.location.pathname.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    return path.includes('/entregador') || search.includes('entregador=true') || search.includes('driver=true');
+  });
+
+  // Verificar URLs de rotas (/pedido/:orderNumber, /admin, /entregador)
   useEffect(() => {
     const checkRoute = () => {
       const path = window.location.pathname;
@@ -58,6 +67,9 @@ const MainContent: React.FC = () => {
       const isAdm = path.toLowerCase().includes('/admin') || search.has('admin');
       setIsAdminRoute(isAdm);
       setIsAdminAuthenticated(!!sessionStorage.getItem('admin_auth_token'));
+
+      const isDrv = path.toLowerCase().includes('/entregador') || search.has('entregador') || search.has('driver');
+      setIsDriverRoute(isDrv);
 
       // Verificar rota de pedido /pedido/PED-XXXX ou ?pedido=PED-XXXX
       const pedidoMatch = path.match(/\/pedido\/([a-zA-Z0-9_-]+)/i);
@@ -69,7 +81,6 @@ const MainContent: React.FC = () => {
         openOrderTracking(orderNumber, token);
         setIsTrackingModalOpen(true);
       } else if (activeTrackingOrder) {
-        // Se já houver um pedido ativo salvo no dispositivo
         setIsTrackingModalOpen(true);
       }
     };
@@ -88,6 +99,11 @@ const MainContent: React.FC = () => {
     window.history.pushState({}, '', '/admin/pedidos');
   };
 
+  const handleOpenDriver = () => {
+    setIsDriverRoute(true);
+    window.history.pushState({}, '', '/entregador');
+  };
+
   const handleAdminLogout = () => {
     sessionStorage.removeItem('admin_auth_token');
     setIsAdminAuthenticated(false);
@@ -98,6 +114,18 @@ const MainContent: React.FC = () => {
   const handleAdminLoginSuccess = () => {
     setIsAdminAuthenticated(true);
   };
+
+  // Se estiver na rota do Entregador (/entregador)
+  if (isDriverRoute) {
+    return (
+      <DriverApp
+        onBackToSite={() => {
+          setIsDriverRoute(false);
+          window.history.pushState({}, '', '/');
+        }}
+      />
+    );
+  }
 
   // Se estiver na rota /admin
   if (isAdminRoute) {
@@ -240,7 +268,7 @@ const MainContent: React.FC = () => {
       <ContactSection />
 
       {/* Rodapé */}
-      <Footer onOpenAdmin={handleOpenAdmin} />
+      <Footer onOpenAdmin={handleOpenAdmin} onOpenDriver={handleOpenDriver} />
 
       {/* Modais e Drawers */}
       {selectedProductForModal && (

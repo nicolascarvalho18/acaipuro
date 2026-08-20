@@ -6,9 +6,10 @@ import { Clock, MapPin, Send, Lock } from 'lucide-react';
 
 interface FooterProps {
   onOpenAdmin?: () => void;
+  onOpenDriver?: () => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onOpenAdmin }) => {
+export const Footer: React.FC<FooterProps> = ({ onOpenAdmin, onOpenDriver }) => {
   const currentYear = new Date().getFullYear();
 
   return (
@@ -82,6 +83,17 @@ export const Footer: React.FC<FooterProps> = ({ onOpenAdmin }) => {
                   >
                     <Lock className="w-3 h-3" />
                     <span>Painel do Lojista</span>
+                  </button>
+                </li>
+              )}
+              {onOpenDriver && (
+                <li>
+                  <button
+                    onClick={onOpenDriver}
+                    className="flex items-center gap-1 text-white/60 hover:text-white transition-colors cursor-pointer"
+                  >
+                    <span>🏍️</span>
+                    <span>Área do Entregador</span>
                   </button>
                 </li>
               )}

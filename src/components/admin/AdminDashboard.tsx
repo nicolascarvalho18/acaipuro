@@ -53,9 +53,11 @@ import {
   MessageSquare,
   Wallet,
   Calendar,
-  AlertCircle
+  AlertCircle,
+  Navigation
 } from 'lucide-react';
 import type { Product, CategoryInfo, AdditionalItem, ProductSize } from '../../types';
+import { AdminLiveDeliveries } from './AdminLiveDeliveries';
 
 export interface OrderItem {
   productId?: string;
@@ -118,6 +120,7 @@ export interface AuditLog {
 type TabType = 
   | 'visao_geral'
   | 'pedidos'
+  | 'entregas_mapa'
   | 'caixa'
   | 'produtos'
   | 'categorias'
@@ -683,6 +686,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const menuItems = [
     { id: 'visao_geral', label: 'Visão Geral', icon: LayoutDashboard },
     { id: 'pedidos', label: 'Pedidos em Tempo Real', icon: ShoppingBag, badge: countNew },
+    { id: 'entregas_mapa', label: 'Entregas no Mapa (GPS)', icon: Navigation },
     { id: 'caixa', label: 'Caixa & Fechamento', icon: Wallet },
     { id: 'produtos', label: 'Cardápio / Produtos', icon: Layers },
     { id: 'categorias', label: 'Categorias', icon: Sparkles },
@@ -1324,13 +1328,44 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                                 </button>
                               )}
                               {order.status === 'preparing' && (
-                                <button
-                                  onClick={() => handleUpdateStatus(order.id || order.order_number, 'delivering')}
-                                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                                >
-                                  <Truck className="w-4 h-4" />
-                                  <span>Saiu para entrega</span>
-                                </button>
+                                <>
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const res = await fetch('/api/delivery/assign', {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({
+                                            action: 'create_offer',
+                                            orderId: order.id,
+                                            orderNumber: order.order_number,
+                                            deliveryFee: order.delivery_fee || 5.00,
+                                          }),
+                                        });
+                                        const data = await res.json();
+                                        if (res.ok && data.success) {
+                                          alert(`Corrida do pedido #${order.order_number} despachada para os entregadores!`);
+                                          setActiveTab('entregas_mapa');
+                                        }
+                                      } catch {
+                                        alert('Erro ao despachar corrida.');
+                                      }
+                                    }}
+                                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
+                                    title="Disponibilizar corrida para os entregadores no app"
+                                  >
+                                    <Navigation className="w-4 h-4" />
+                                    <span>Despachar Entregador</span>
+                                  </button>
+
+                                  <button
+                                    onClick={() => handleUpdateStatus(order.id || order.order_number, 'delivering')}
+                                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                                  >
+                                    <Truck className="w-4 h-4" />
+                                    <span>Saiu para entrega</span>
+                                  </button>
+                                </>
                               )}
                               {order.status === 'delivering' && (
                                 <button
@@ -1406,6 +1441,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
             </div>
           </div>
         )}
+
+        {/* 2.1 ENTREGAS EM TEMPO REAL (MAPA LIVE GPS) */}
+        {activeTab === 'entregas_mapa' && <AdminLiveDeliveries />}
 
         {/* 3. CAIXA & FECHAMENTO DIÁRIO */}
         {activeTab === 'caixa' && (

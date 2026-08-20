@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { formatCurrency, getWhatsAppUrl } from '../utils/formatters';
 import { STORE_CONFIG } from '../config/storeConfig';
 import { supabase } from '../services/supabaseClient';
+import { LeafletMap } from './delivery/LeafletMap';
 import { 
   X, 
   CheckCircle2, 
@@ -20,7 +21,9 @@ import {
   Banknote,
   QrCode,
   Store,
-  Share2
+  Share2,
+  Navigation,
+  Bike
 } from 'lucide-react';
 
 interface OrderTrackingModalProps {
@@ -30,6 +33,19 @@ interface OrderTrackingModalProps {
   onClose: () => void;
   initialOrderData?: any;
 }
+
+const SANTOS_COORDS: Record<string, { lat: number; lng: number }> = {
+  'Gonzaga': { lat: -23.9660, lng: -46.3340 },
+  'Boqueirão': { lat: -23.9680, lng: -46.3260 },
+  'Embaré': { lat: -23.9720, lng: -46.3150 },
+  'Ponta da Praia': { lat: -23.9850, lng: -46.3000 },
+  'Aparecida': { lat: -23.9750, lng: -46.3100 },
+  'Campo Grande': { lat: -23.9550, lng: -46.3400 },
+  'Marapé': { lat: -23.9600, lng: -46.3500 },
+  'Encruzilhada': { lat: -23.9500, lng: -46.3300 },
+  'Vila Mathias': { lat: -23.9450, lng: -46.3280 },
+  'Centro': { lat: -23.9350, lng: -46.3250 },
+};
 
 const DELIVERY_STAGES = [
   { id: 'new', label: 'Pedido recebido', description: 'Recebemos seu pedido. Em instantes vamos confirmar.', icon: ShoppingBag },
@@ -56,6 +72,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
 }) => {
   const [order, setOrder] = useState<any>(initialOrderData);
   const [status, setStatus] = useState<string>(initialOrderData?.status || 'new');
+  const [driverInfo, setDriverInfo] = useState<any | null>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [copiedLink, setCopiedLink] = useState(false);
   const [browserNotifAllowed, setBrowserNotifAllowed] = useState(false);
@@ -127,6 +144,17 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
           }
         }
       }
+
+      // Buscar localização do entregador se for entrega
+      try {
+        const locRes = await fetch(`/api/delivery/location?orderNumber=${encodeURIComponent(orderNumber)}`);
+        if (locRes.ok) {
+          const locData = await locRes.json();
+          if (locData.success && locData.location) {
+            setDriverInfo(locData.location);
+          }
+        }
+      } catch {}
     } catch (e) {
       console.warn('Tracking fetch error:', e);
     }
@@ -267,6 +295,57 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
               <p className="text-xs text-[#726C74] max-w-sm mx-auto">
                 {stages[currentStageIndex]?.description || 'Aguarde a atualização da açaiteria.'}
               </p>
+            </div>
+          )}
+
+          {/* MAPA EM TEMPO REAL COM ROTA & ENTREGADOR (DELIVERY) */}
+          {!isPickup && !isCancelled && !isDone && (
+            <div className="space-y-3">
+              <div className="rounded-2xl overflow-hidden shadow-inner border border-[#ECE8F0]">
+                <LeafletMap
+                  height="220px"
+                  storeLocation={{ lat: -23.9618, lng: -46.3322, label: 'Açaí Puro Sabor (Loja)' }}
+                  destinationLocation={{
+                    lat: order?.neighborhood && SANTOS_COORDS[order.neighborhood] ? SANTOS_COORDS[order.neighborhood].lat : -23.9680,
+                    lng: order?.neighborhood && SANTOS_COORDS[order.neighborhood] ? SANTOS_COORDS[order.neighborhood].lng : -46.3260,
+                    label: order?.street ? `${order.street}, Nº ${order.number || ''}` : 'Endereço de Entrega',
+                  }}
+                  driverLocation={driverInfo?.latitude && driverInfo?.longitude ? {
+                    name: driverInfo.name || 'Entregador',
+                    vehicleType: driverInfo.vehicleType || 'motorcycle',
+                    vehiclePlate: driverInfo.vehiclePlate,
+                    lat: Number(driverInfo.latitude),
+                    lng: Number(driverInfo.longitude),
+                    updatedAt: driverInfo.recordedAt,
+                  } : undefined}
+                  showRoute={true}
+                />
+              </div>
+
+              {/* Card do Entregador Designado */}
+              {driverInfo ? (
+                <div className="p-3.5 bg-purple-50/70 border border-purple-100 rounded-2xl flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-full bg-[#69318A] text-white flex items-center justify-center font-bold">
+                      {driverInfo.vehicleType === 'bicycle' ? <Bike className="w-5 h-5" /> : <Truck className="w-5 h-5" />}
+                    </div>
+                    <div>
+                      <p className="font-bold text-[#28242A]">{driverInfo.name || 'Entregador Parceiro'}</p>
+                      <p className="text-[11px] text-[#69318A]">
+                        {driverInfo.vehicleType === 'bicycle' ? '🚲 Bicicleta' : `🏍️ Moto ${driverInfo.vehiclePlate ? `(${driverInfo.vehiclePlate})` : ''}`}
+                      </p>
+                    </div>
+                  </div>
+                  <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 rounded-full text-[10px] font-bold">
+                    ● Em rota
+                  </span>
+                </div>
+              ) : (
+                <div className="p-3 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl flex items-center gap-2 text-xs text-[#726C74]">
+                  <Clock className="w-4 h-4 text-[#69318A] shrink-0" />
+                  <span>A açaiteria está preparando seu pedido e logo um entregador será designado.</span>
+                </div>
+              )}
             </div>
           )}
 
