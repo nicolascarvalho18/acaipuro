@@ -89,12 +89,95 @@ export default async function handler(req: any, res: any) {
 
   const supabase = getSupabaseClient();
 
-  // GET: Listar Pedidos
+  // GET: Listar Pedidos ou Rastrear Pedido Individual
   if (req.method === 'GET') {
     try {
+      const orderNumber = req.query?.orderNumber || req.query?.orderId;
+      const token = req.query?.token;
       const statusFilter = req.query?.status;
       const includeArchived = req.query?.includeArchived === 'true';
       const includeDeleted = req.query?.includeDeleted === 'true';
+
+      // Se for consulta de rastreamento de pedido individual
+      if (orderNumber) {
+        if (supabase) {
+          try {
+            const { data: order, error } = await supabase
+              .from('orders')
+              .select('*')
+              .or(`order_number.eq.${orderNumber},id.eq.${orderNumber}`)
+              .single();
+
+            if (!error && order) {
+              const isAuthorized = !order.access_token || !token || order.access_token === token;
+              const sanitizedOrder = {
+                id: order.id,
+                order_number: order.order_number,
+                customer_name: order.customer_name,
+                customer_phone: isAuthorized ? order.customer_phone : '***',
+                fulfillment_type: order.fulfillment_type,
+                street: isAuthorized ? order.street : undefined,
+                number: isAuthorized ? order.number : undefined,
+                neighborhood: order.neighborhood,
+                complement: isAuthorized ? order.complement : undefined,
+                items: order.items,
+                subtotal: order.subtotal,
+                delivery_fee: order.delivery_fee,
+                total: order.total,
+                payment_method: order.payment_method,
+                status: order.status,
+                notes: isAuthorized ? order.notes : undefined,
+                cancellation_reason: order.cancellation_reason,
+                created_at: order.created_at,
+                updated_at: order.updated_at,
+                completed_at: order.completed_at,
+              };
+
+              // Buscar histórico e notificações se existirem
+              let history: any[] = [];
+              let notifications: any[] = [];
+              try {
+                const { data: hData } = await supabase
+                  .from('order_status_history')
+                  .select('*')
+                  .eq('order_id', order.id)
+                  .order('created_at', { ascending: true });
+                if (hData) history = hData;
+
+                const { data: nData } = await supabase
+                  .from('order_notifications')
+                  .select('*')
+                  .eq('order_id', order.id)
+                  .order('created_at', { ascending: false });
+                if (nData) notifications = nData;
+              } catch {}
+
+              return res.status(200).json({
+                success: true,
+                order: sanitizedOrder,
+                history,
+                notifications,
+                isAuthorized,
+              });
+            }
+          } catch (e) {
+            console.warn('Supabase tracking lookup error:', e);
+          }
+        }
+
+        const mem = memoryOrders.find(o => o.order_number === orderNumber || o.id === orderNumber);
+        if (mem) {
+          return res.status(200).json({
+            success: true,
+            order: mem,
+            history: [],
+            notifications: [],
+            isAuthorized: true,
+          });
+        }
+
+        return res.status(404).json({ success: false, error: 'Pedido não encontrado' });
+      }
 
       if (supabase) {
         try {

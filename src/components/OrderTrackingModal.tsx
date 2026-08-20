@@ -98,7 +98,10 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
     if (!orderNumber) return;
     try {
       const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
-      const res = await fetch(`/api/orders/tracking?orderNumber=${encodeURIComponent(orderNumber)}${tokenParam}`);
+      let res = await fetch(`/api/orders/tracking?orderNumber=${encodeURIComponent(orderNumber)}${tokenParam}`);
+      if (!res.ok) {
+        res = await fetch(`/api/orders?orderNumber=${encodeURIComponent(orderNumber)}${tokenParam}`);
+      }
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.order) {
