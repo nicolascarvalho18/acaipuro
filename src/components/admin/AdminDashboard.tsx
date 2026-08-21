@@ -58,7 +58,10 @@ import {
   RotateCcw,
   Loader2,
   MapPin,
-  FileText
+  FileText,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink
 } from 'lucide-react';
 import type { Product, CategoryInfo, AdditionalItem, ProductSize } from '../../types';
 import { AdminLiveDeliveries } from './AdminLiveDeliveries';
@@ -216,6 +219,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const [isLoading, setIsLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('all');
+  const [ordersPeriodFilter, setOrdersPeriodFilter] = useState<'todos' | 'hoje' | 'ontem' | '7dias'>('todos');
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+  const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
   const [searchQuery, setSearchQuery] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(true);
 
@@ -339,6 +345,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         }
         prevUnconfirmedCountRef.current = newCount;
         setOrders(normalizedOrders);
+        setLastFetchTime(new Date());
 
         if (newCount > 0) {
           document.title = `(${newCount}) 🔔 Novo Pedido! - Açaí Puro Sabor`;
@@ -818,6 +825,24 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const countDone = orders.filter(o => !o.deleted_at && (o.status === 'done' || o.status === 'completed')).length;
   const countCancelled = orders.filter(o => !o.deleted_at && o.status === 'cancelled').length;
   const countArchived = orders.filter(o => !o.deleted_at && o.is_archived).length;
+
+  const lastUpdateFormatted = useMemo(() => {
+    return lastFetchTime.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }, [lastFetchTime]);
+
+  const toggleExpandOrder = (id: string) => {
+    setExpandedOrderIds(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const getElapsedTime = (dateStr: string) => {
+    const diffMs = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.max(0, Math.floor(diffMs / 60000));
+    if (mins < 1) return 'agora';
+    if (mins < 60) return `há ${mins} min`;
+    const hours = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return `há ${hours}h ${remMins}min`;
+  };
 
   // Produtos mais vendidos no período
   const topProdutosPeriodo = useMemo(() => {
@@ -1362,9 +1387,83 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
         {activeTab === 'pedidos' && (
           <div className="p-4 sm:p-8 space-y-6">
             
-            {/* Barra de Filtros e Busca */}
-            <div className="bg-white p-4 sm:p-5 rounded-3xl border border-[#ECE8F0] space-y-3 shadow-xs">
-              <div className="flex flex-col sm:flex-row gap-3">
+            {/* CABEÇALHO DA PÁGINA */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-3xl border border-[#ECE8F0] shadow-xs">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${isOpen ? 'bg-emerald-500 animate-ping' : 'bg-red-500'}`} />
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#69318A]">Painel de Atendimento</span>
+                </div>
+                <h1 className="text-xl sm:text-2xl font-black text-[#28242A] font-['DM_Sans'] mt-0.5">
+                  Pedidos em tempo real
+                </h1>
+                <p className="text-xs sm:text-sm text-[#726C74] mt-0.5">
+                  Acompanhe e gerencie os pedidos recebidos pela loja
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* Indicador Loja Aberta/Fechada + Botão de Toggle */}
+                <div className="flex items-center gap-2 px-3.5 py-2 rounded-2xl border text-xs font-bold transition-all bg-[#FCFAF7] border-[#ECE8F0]">
+                  <span className={`w-2 h-2 rounded-full ${isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
+                  <span className={isOpen ? 'text-emerald-800' : 'text-red-700'}>
+                    {isOpen ? 'Loja aberta' : 'Loja fechada'}
+                  </span>
+                  <button
+                    onClick={() => {
+                      toggleStoreOpen(!isOpen);
+                      logAudit('Disponibilidade Alterada', 'Loja', !isOpen ? 'Loja Aberta' : 'Loja Pausada');
+                    }}
+                    className={`ml-1 px-2.5 py-1 rounded-xl text-[11px] font-bold cursor-pointer transition-colors ${
+                      isOpen 
+                        ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300' 
+                        : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300'
+                    }`}
+                  >
+                    {isOpen ? 'Pausar loja' : 'Abrir loja'}
+                  </button>
+                </div>
+
+                {/* Botão Som Ativo / Silenciado */}
+                <button
+                  onClick={() => setSoundEnabled(!soundEnabled)}
+                  className={`px-3.5 py-2 rounded-2xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                    soundEnabled 
+                      ? 'bg-purple-50 hover:bg-purple-100 text-[#69318A] border-purple-200' 
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600 border-gray-300'
+                  }`}
+                  title={soundEnabled ? 'Silenciar alertas sonoros' : 'Ativar alertas sonoros'}
+                >
+                  {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                  <span>{soundEnabled ? 'Som ativo' : 'Som mudo'}</span>
+                </button>
+
+                {/* Botão de Atualização Manual */}
+                <button
+                  onClick={() => {
+                    fetchOrders();
+                    setToastMessage({ text: 'Atualizando pedidos...', type: 'success' });
+                  }}
+                  disabled={isLoading}
+                  className="px-3.5 py-2 bg-[#FCFAF7] hover:bg-[#F3EDF6] text-[#726C74] hover:text-[#69318A] rounded-2xl border border-[#ECE8F0] cursor-pointer transition-all flex items-center gap-1.5 text-xs font-bold"
+                  title="Atualizar pedidos manualmente do banco"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-[#69318A]' : ''}`} />
+                  <span>Atualizar</span>
+                </button>
+
+                {/* Horário da Última Atualização */}
+                <div className="text-xs text-[#726C74] font-medium bg-[#FCFAF7] px-3.5 py-2 rounded-2xl border border-[#ECE8F0] flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-[#69318A]" />
+                  <span>Atualizado às {lastUpdateFormatted}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* ÁREA DE BUSCA E FILTROS */}
+            <div className="bg-white p-4 sm:p-5 rounded-3xl border border-[#ECE8F0] space-y-3.5 shadow-xs">
+              <div className="flex flex-col md:flex-row gap-3">
+                {/* Campo de Busca */}
                 <div className="relative flex-1">
                   <Search className="w-4 h-4 text-[#726C74] absolute left-3.5 top-3 pointer-events-none" />
                   <input
@@ -1372,10 +1471,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                     placeholder="Buscar por cliente, pedido #, telefone ou bairro..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 bg-[#FCFAF7] border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none"
+                    className="w-full pl-10 pr-8 py-2.5 bg-[#FCFAF7] border border-[#ECE8F0] focus:border-[#69318A] focus:bg-white rounded-2xl text-xs sm:text-sm text-[#28242A] outline-none transition-all"
                   />
                   {searchQuery && (
-                    <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">✕</button>
+                    <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600">✕</button>
                   )}
                 </div>
 
@@ -1383,107 +1482,174 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 <select
                   value={fulfillmentFilter}
                   onChange={(e) => setFulfillmentFilter(e.target.value)}
-                  className="py-2 px-3 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs font-bold text-[#28242A] outline-none cursor-pointer"
+                  className="py-2.5 px-3.5 bg-[#FCFAF7] border border-[#ECE8F0] focus:border-[#69318A] rounded-2xl text-xs font-bold text-[#28242A] outline-none cursor-pointer"
                 >
-                  <option value="all">Todas modalidades</option>
+                  <option value="all">Todas as modalidades</option>
                   <option value="delivery">🛵 Apenas Entrega</option>
                   <option value="pickup">🏪 Apenas Retirada</option>
                 </select>
+
+                {/* Filtro de Período */}
+                <select
+                  value={ordersPeriodFilter}
+                  onChange={(e) => setOrdersPeriodFilter(e.target.value as any)}
+                  className="py-2.5 px-3.5 bg-[#FCFAF7] border border-[#ECE8F0] focus:border-[#69318A] rounded-2xl text-xs font-bold text-[#28242A] outline-none cursor-pointer"
+                >
+                  <option value="todos">Todos os períodos</option>
+                  <option value="hoje">Hoje</option>
+                  <option value="ontem">Ontem</option>
+                  <option value="7dias">Últimos 7 dias</option>
+                </select>
+
+                {/* Botão de Limpar Filtros se algum estiver ativo */}
+                {(searchQuery || fulfillmentFilter !== 'all' || ordersPeriodFilter !== 'todos') && (
+                  <button
+                    onClick={() => {
+                      setSearchQuery('');
+                      setFulfillmentFilter('all');
+                      setOrdersPeriodFilter('todos');
+                    }}
+                    className="px-3.5 py-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-2xl border border-red-200 transition-colors cursor-pointer whitespace-nowrap"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
               </div>
 
-              {/* Abas de Status */}
-              <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar text-xs">
+              {/* ABAS OBRIGATÓRIAS COM CONTADORES */}
+              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
                 {[
-                  { id: 'all', label: 'Todos Ativos', count: activeOperationalOrders.length },
+                  { id: 'all', label: 'Todos ativos', count: activeOperationalOrders.length },
                   { id: 'new', label: 'Novos', count: countNew, isAlert: true },
-                  { id: 'preparing', label: 'Em Preparo', count: countPreparing },
-                  { id: 'delivering', label: 'Em Entrega', count: countDelivering },
-                  { id: 'ready_for_pickup', label: 'Pronto p/ Retirada', count: countReadyPickup },
+                  { id: 'preparing', label: 'Em preparo', count: countPreparing },
+                  { id: 'delivering', label: 'Em entrega', count: countDelivering },
+                  { id: 'ready_for_pickup', label: 'Prontos para retirada', count: countReadyPickup },
                   { id: 'done', label: 'Concluídos', count: countDone },
                   { id: 'cancelled', label: 'Cancelados', count: countCancelled },
                   { id: 'archived', label: 'Arquivados', count: countArchived },
-                ].map(tab => (
-                  <button
-                    key={tab.id}
-                    onClick={() => setStatusFilter(tab.id)}
-                    className={`px-3.5 py-2 rounded-xl font-bold whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
-                      statusFilter === tab.id
-                        ? 'bg-[#69318A] text-white shadow-xs'
-                        : 'bg-[#FCFAF7] text-[#726C74] hover:bg-[#F3EDF6] border border-[#ECE8F0]'
-                    }`}
-                  >
-                    <span>{tab.label}</span>
-                    <span className={`px-1.5 py-0.2 rounded text-[10px] font-extrabold ${
-                      statusFilter === tab.id 
-                        ? 'bg-white/20 text-white' 
-                        : (tab.isAlert && tab.count > 0 ? 'bg-red-500 text-white animate-pulse' : 'bg-[#ECE8F0] text-[#28242A]')
-                    }`}>
-                      {tab.count}
-                    </span>
-                  </button>
-                ))}
+                ].map(tab => {
+                  const isSelected = statusFilter === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      onClick={() => setStatusFilter(tab.id)}
+                      className={`px-4 py-2.5 rounded-2xl font-bold whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#69318A] text-white shadow-xs'
+                          : 'bg-[#FCFAF7] text-[#726C74] hover:bg-[#F3EDF6] hover:text-[#28242A] border border-[#ECE8F0]'
+                      }`}
+                    >
+                      <span>{tab.label}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
+                        isSelected 
+                          ? 'bg-white/25 text-white' 
+                          : (tab.isAlert && tab.count > 0 ? 'bg-red-500 text-white animate-pulse' : 'bg-[#ECE8F0] text-[#28242A]')
+                      }`}>
+                        {tab.count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
-            {/* Listagem de Cards de Pedidos */}
+            {/* LISTAGEM DE CARDS DE PEDIDOS */}
             <div className="space-y-4">
-              {orders
-                .filter(order => {
-                  if (order.deleted_at) return false;
+              {(() => {
+                const filteredOrdersList = orders
+                  .filter(order => {
+                    if (order.deleted_at) return false;
 
-                  // 1. Filtro por Aba de Status
-                  let matchesStatus = false;
-                  if (statusFilter === 'archived') {
-                    matchesStatus = !!order.is_archived;
-                  } else if (statusFilter === 'all') {
-                    matchesStatus = !order.is_archived && !['cancelled', 'done', 'completed'].includes(order.status);
-                  } else if (statusFilter === 'new') {
-                    matchesStatus = !order.is_archived && order.status === 'new';
-                  } else if (statusFilter === 'preparing') {
-                    matchesStatus = !order.is_archived && (order.status === 'preparing' || order.status === 'confirmed');
-                  } else if (statusFilter === 'delivering') {
-                    matchesStatus = !order.is_archived && (order.status === 'delivering' || order.status === 'out_for_delivery');
-                  } else if (statusFilter === 'ready_for_pickup') {
-                    matchesStatus = !order.is_archived && order.status === 'ready_for_pickup';
-                  } else if (statusFilter === 'done') {
-                    matchesStatus = order.status === 'done' || order.status === 'completed';
-                  } else if (statusFilter === 'cancelled') {
-                    matchesStatus = order.status === 'cancelled';
-                  } else {
-                    matchesStatus = true;
-                  }
+                    // 1. Filtro por Aba de Status
+                    let matchesStatus = false;
+                    if (statusFilter === 'archived') {
+                      matchesStatus = !!order.is_archived;
+                    } else if (statusFilter === 'all') {
+                      matchesStatus = !order.is_archived && !['cancelled', 'done', 'completed'].includes(order.status);
+                    } else if (statusFilter === 'new') {
+                      matchesStatus = !order.is_archived && order.status === 'new';
+                    } else if (statusFilter === 'preparing') {
+                      matchesStatus = !order.is_archived && (order.status === 'preparing' || order.status === 'confirmed');
+                    } else if (statusFilter === 'delivering') {
+                      matchesStatus = !order.is_archived && (order.status === 'delivering' || order.status === 'out_for_delivery');
+                    } else if (statusFilter === 'ready_for_pickup') {
+                      matchesStatus = !order.is_archived && order.status === 'ready_for_pickup';
+                    } else if (statusFilter === 'done') {
+                      matchesStatus = order.status === 'done' || order.status === 'completed';
+                    } else if (statusFilter === 'cancelled') {
+                      matchesStatus = order.status === 'cancelled';
+                    } else {
+                      matchesStatus = true;
+                    }
 
-                  if (!matchesStatus) return false;
+                    if (!matchesStatus) return false;
 
-                  // 2. Filtro por Modalidade (Entrega / Retirada)
-                  if (fulfillmentFilter !== 'all' && order.fulfillment_type !== fulfillmentFilter) {
-                    return false;
-                  }
+                    // 2. Filtro por Modalidade (Entrega / Retirada)
+                    if (fulfillmentFilter !== 'all' && order.fulfillment_type !== fulfillmentFilter) {
+                      return false;
+                    }
 
-                  // 3. Busca por texto
-                  if (searchQuery.trim()) {
-                    const q = searchQuery.toLowerCase().trim();
-                    const cleanPhone = (order.customer_phone || '').replace(/\D/g, '');
-                    const cleanQ = q.replace(/\D/g, '');
-                    const matchNum = (order.order_number || '').toLowerCase().includes(q);
-                    const matchName = (order.customer_name || '').toLowerCase().includes(q);
-                    const matchPhone = (order.customer_phone || '').includes(q) || (cleanQ.length > 2 && cleanPhone.includes(cleanQ));
-                    const matchNeigh = (order.neighborhood || '').toLowerCase().includes(q);
-                    if (!matchNum && !matchName && !matchPhone && !matchNeigh) return false;
-                  }
+                    // 3. Filtro por Período
+                    if (ordersPeriodFilter === 'hoje') {
+                      if (getSaoPauloDate(order.created_at) !== todaySP) return false;
+                    } else if (ordersPeriodFilter === 'ontem') {
+                      if (getSaoPauloDate(order.created_at) !== yesterdaySP) return false;
+                    } else if (ordersPeriodFilter === '7dias') {
+                      const d7 = new Date();
+                      d7.setDate(d7.getDate() - 7);
+                      if (new Date(order.created_at).getTime() < d7.getTime()) return false;
+                    }
 
-                  return true;
-                })
-                .map(order => {
+                    // 4. Busca por texto
+                    if (searchQuery.trim()) {
+                      const q = searchQuery.toLowerCase().trim();
+                      const cleanPhone = (order.customer_phone || '').replace(/\D/g, '');
+                      const cleanQ = q.replace(/\D/g, '');
+                      const matchNum = (order.order_number || '').toLowerCase().includes(q);
+                      const matchName = (order.customer_name || '').toLowerCase().includes(q);
+                      const matchPhone = (order.customer_phone || '').includes(q) || (cleanQ.length > 2 && cleanPhone.includes(cleanQ));
+                      const matchNeigh = (order.neighborhood || '').toLowerCase().includes(q);
+                      if (!matchNum && !matchName && !matchPhone && !matchNeigh) return false;
+                    }
+
+                    return true;
+                  })
+                  .sort((a, b) => {
+                    // Pedidos ativos e novos ordenados do mais antigo para o mais recente para não atrasar nenhum
+                    const isOperationalA = !['done', 'completed', 'cancelled'].includes(a.status);
+                    const isOperationalB = !['done', 'completed', 'cancelled'].includes(b.status);
+                    if (isOperationalA && isOperationalB) {
+                      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+                    }
+                    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                  });
+
+                if (filteredOrdersList.length === 0) {
+                  return (
+                    <div className="bg-white rounded-3xl border border-[#ECE8F0] p-12 text-center space-y-2 shadow-xs">
+                      <div className="w-12 h-12 rounded-full bg-purple-50 text-[#69318A] flex items-center justify-center mx-auto">
+                        <ShoppingBag className="w-6 h-6 stroke-[1.8]" />
+                      </div>
+                      <h3 className="text-sm font-bold text-[#28242A]">Nenhum pedido nesta etapa.</h3>
+                      <p className="text-xs text-[#726C74]">
+                        Novos pedidos recebidos aparecerão automaticamente aqui em tempo real.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return filteredOrdersList.map(order => {
                   const orderId = order.id || order.order_number;
                   const isUpdating = updatingOrderId === orderId;
                   const statusInfo = STATUS_CONFIG[order.status] || STATUS_CONFIG.new;
                   const StatusIcon = statusInfo.icon;
                   const isNew = order.status === 'new';
                   const isPickup = order.fulfillment_type === 'pickup';
+                  const isExpanded = !!expandedOrderIds[orderId];
                   
-                  const isDelayed = !['done', 'completed', 'cancelled'].includes(order.status) && 
-                    (Date.now() - new Date(order.created_at).getTime()) > 45 * 60 * 1000;
+                  // Pedidos ativos com mais de 35 minutos são considerados atrasados
+                  const diffMinutes = Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000);
+                  const isDelayed = !['done', 'completed', 'cancelled'].includes(order.status) && diffMinutes > 35;
 
                   return (
                     <div
@@ -1496,10 +1662,10 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                             : 'border-[#ECE8F0] shadow-xs'
                       }`}
                     >
-                      {/* Cabeçalho do Card */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#ECE8F0]">
+                      {/* CABEÇALHO DO CARD */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-[#ECE8F0]">
                         <div className="flex flex-wrap items-center gap-2.5">
-                          <span className="text-lg font-black text-[#28242A] font-['DM_Sans']">
+                          <span className="text-lg sm:text-xl font-black text-[#28242A] font-['DM_Sans']">
                             Pedido #{order.order_number}
                           </span>
                           
@@ -1508,74 +1674,77 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                             <span>{statusInfo.label}</span>
                           </span>
 
-                          <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold ${
-                            isPickup ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                          <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${
+                            isPickup ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-blue-50 text-blue-800 border border-blue-200'
                           }`}>
-                            {isPickup ? '🏪 Retirada no Balcão' : '🛵 Entrega Delivery'}
+                            {isPickup ? '🏪 Retirada no Balcão' : '🛵 Entrega em Domicílio'}
                           </span>
 
                           {isNew && (
-                            <span className="px-2 py-0.5 rounded-full bg-[#69318A] text-white text-[10px] font-extrabold animate-pulse">
+                            <span className="px-2.5 py-0.5 rounded-full bg-[#69318A] text-white text-[10px] font-extrabold animate-pulse">
                               NOVO!
                             </span>
                           )}
 
                           {isDelayed && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-extrabold flex items-center gap-1 animate-pulse">
+                            <span className="px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-extrabold flex items-center gap-1 animate-pulse">
                               <AlertTriangle className="w-3 h-3" />
-                              <span>Atrasado (&gt;45 min)</span>
+                              <span>ATRASADO ({diffMinutes} min)</span>
                             </span>
                           )}
                         </div>
 
                         <div className="flex items-center gap-3 text-xs text-[#726C74]">
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3.5 h-3.5" />
-                            {new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} • {new Date(order.created_at).toLocaleDateString('pt-BR')}
+                          <span className="flex items-center gap-1 font-medium">
+                            <Clock className="w-3.5 h-3.5 text-[#69318A]" />
+                            <span>Recebido às {new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ({getElapsedTime(order.created_at)})</span>
                           </span>
 
                           <button
                             onClick={() => printThermalReceipt(order)}
-                            title="Imprimir Comanda 80mm"
-                            className="p-1.5 bg-gray-50 hover:bg-gray-100 text-[#726C74] rounded-lg border border-[#ECE8F0] cursor-pointer"
+                            title="Imprimir Comanda do Pedido"
+                            className="p-2 bg-[#FCFAF7] hover:bg-[#F3EDF6] text-[#726C74] hover:text-[#69318A] rounded-xl border border-[#ECE8F0] cursor-pointer transition-colors flex items-center gap-1 text-xs font-bold"
                           >
-                            <Printer className="w-4 h-4" />
+                            <Printer className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">Imprimir</span>
                           </button>
                         </div>
                       </div>
 
-                      {/* Informações do Cliente e Endereço */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-[#FCFAF7] p-3.5 rounded-2xl border border-[#ECE8F0]">
-                        <div className="space-y-1">
-                          <div className="font-bold text-[#28242A] flex items-center gap-2">
+                      {/* INFORMAÇÕES DO CLIENTE E ENDEREÇO */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs bg-[#FCFAF7] p-4 rounded-2xl border border-[#ECE8F0]">
+                        <div className="space-y-1.5">
+                          <div className="font-bold text-[#28242A] text-sm flex items-center gap-2">
                             <span>👤 {order.customer_name}</span>
                             {order.customer_phone && (
                               <a
                                 href={`https://wa.me/55${order.customer_phone.replace(/\D/g, '')}`}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="text-emerald-700 hover:underline flex items-center gap-0.5 font-semibold text-[11px]"
+                                className="text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-lg border border-emerald-200 flex items-center gap-1 font-bold text-[11px] transition-colors"
                               >
                                 💬 WhatsApp
                               </a>
                             )}
                           </div>
-                          <div className="text-[#726C74]">
-                            📞 {order.customer_phone || 'Telefone não informado'}
+                          <div className="text-[#726C74] flex items-center gap-1">
+                            <Phone className="w-3 h-3" />
+                            <span>{order.customer_phone || 'Telefone não informado'}</span>
                           </div>
                         </div>
 
-                        <div className="space-y-1">
-                          <div className="font-bold text-[#28242A]">
-                            {isPickup ? '🏪 Retirada na Açaiteria' : '📍 Endereço de Entrega:'}
+                        <div className="space-y-1.5">
+                          <div className="font-bold text-[#28242A] text-sm flex items-center gap-1.5">
+                            {isPickup ? <Store className="w-4 h-4 text-amber-700" /> : <MapPin className="w-4 h-4 text-[#69318A]" />}
+                            <span>{isPickup ? 'Retirada na Loja:' : 'Endereço de Entrega:'}</span>
                           </div>
-                          <div className="text-[#726C74]">
+                          <div className="text-[#726C74] leading-relaxed">
                             {isPickup ? (
-                              <span>Retirada direta no balcão da loja</span>
+                              <span className="font-medium text-amber-900">Retirada direta no balcão da açaiteria</span>
                             ) : (
                               <span>
-                                {order.street ? `${order.street}, Nº ${order.number || 'S/N'}` : 'Endereço não informado'}
-                                {order.neighborhood ? ` - ${order.neighborhood}` : ''}
+                                <strong className="text-[#28242A]">{order.street ? `${order.street}, Nº ${order.number || 'S/N'}` : 'Endereço não informado'}</strong>
+                                {order.neighborhood ? ` - Bairro: ${order.neighborhood}` : ''}
                                 {order.complement ? ` (${order.complement})` : ''}
                               </span>
                             )}
@@ -1583,69 +1752,95 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                         </div>
                       </div>
 
-                      {/* Itens do Pedido */}
-                      <div className="space-y-2">
-                        <div className="text-xs font-bold text-[#726C74] uppercase tracking-wider">
-                          Itens do Pedido ({order.items?.length || 0})
+                      {/* ITENS DO PEDIDO (RESUMO INICIAL + EXPANSÃO DE DETALHES) */}
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-extrabold text-[#726C74] uppercase tracking-wider">
+                            Itens do Pedido ({order.items?.length || 0})
+                          </span>
+                          <button
+                            onClick={() => toggleExpandOrder(orderId)}
+                            className="text-xs font-bold text-[#69318A] hover:text-[#572185] flex items-center gap-1 cursor-pointer"
+                          >
+                            <span>{isExpanded ? 'Ocultar detalhes' : 'Ver detalhes'}</span>
+                            {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          </button>
                         </div>
-                        <div className="divide-y divide-[#ECE8F0] border border-[#ECE8F0] rounded-2xl bg-white p-2">
-                          {(order.items || []).map((item, idx) => (
-                            <div key={idx} className="py-2.5 first:pt-1 last:pb-1 text-xs space-y-1">
-                              <div className="flex justify-between items-start">
-                                <div className="font-bold text-[#28242A]">
-                                  <span className="text-[#69318A] font-extrabold mr-1.5">{item.quantity}x</span>
-                                  {item.name}
-                                  {item.size && (
-                                    <span className="ml-1.5 text-xs text-[#726C74] font-normal">({item.size})</span>
-                                  )}
-                                </div>
-                                <span className="font-bold text-[#49245B] font-['DM_Sans']">
-                                  {formatCurrency(item.totalPrice || item.unitPrice * item.quantity)}
-                                </span>
-                              </div>
 
-                              {item.base && (
-                                <div className="text-[11px] text-[#726C74] pl-5">
-                                  Base: <span className="font-semibold">{item.base}</span>
+                        {/* Visualização Resumida quando recolhido */}
+                        {!isExpanded && (
+                          <div className="p-3 bg-[#FCFAF7] rounded-2xl border border-[#ECE8F0] text-xs text-[#28242A] flex flex-wrap gap-2">
+                            {(order.items || []).map((item, idx) => (
+                              <span key={idx} className="bg-white px-2.5 py-1 rounded-xl border border-[#ECE8F0] font-medium shadow-2xs">
+                                <strong className="text-[#69318A] mr-1">{item.quantity}x</strong>
+                                {item.name}
+                                {item.size && <span className="text-[#726C74] ml-1">({item.size})</span>}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Visualização Detalhada quando expandido */}
+                        {isExpanded && (
+                          <div className="divide-y divide-[#ECE8F0] border border-[#ECE8F0] rounded-2xl bg-white p-3 space-y-2">
+                            {(order.items || []).map((item, idx) => (
+                              <div key={idx} className="py-2.5 first:pt-1 last:pb-1 text-xs space-y-1.5">
+                                <div className="flex justify-between items-start">
+                                  <div className="font-bold text-[#28242A] text-sm">
+                                    <span className="text-[#69318A] font-extrabold mr-1.5">{item.quantity}x</span>
+                                    {item.name}
+                                    {item.size && (
+                                      <span className="ml-1.5 text-xs text-[#726C74] font-normal">({item.size})</span>
+                                    )}
+                                  </div>
+                                  <span className="font-bold text-[#49245B] font-['DM_Sans'] text-sm">
+                                    {formatCurrency(item.totalPrice || item.unitPrice * item.quantity)}
+                                  </span>
                                 </div>
-                              )}
-                              {item.additionals && item.additionals.length > 0 && (
-                                <div className="text-[11px] text-[#726C74] pl-5 flex flex-wrap gap-1">
-                                  <span>Adicionais:</span>
-                                  {item.additionals.map((add, aIdx) => (
-                                    <span key={aIdx} className="bg-purple-50 text-[#69318A] px-1.5 py-0.5 rounded font-medium">
-                                      +{add}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                              {item.notes && (
-                                <div className="text-[11px] text-amber-800 bg-amber-50 p-1.5 rounded-lg border border-amber-200 mt-1">
-                                  Obs do item: {item.notes}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+
+                                {item.base && (
+                                  <div className="text-xs text-[#726C74] pl-5">
+                                    Base: <span className="font-semibold text-[#28242A]">{item.base}</span>
+                                  </div>
+                                )}
+                                {item.additionals && item.additionals.length > 0 && (
+                                  <div className="text-xs text-[#726C74] pl-5 flex flex-wrap gap-1 items-center">
+                                    <span className="font-semibold">Adicionais:</span>
+                                    {item.additionals.map((add, aIdx) => (
+                                      <span key={aIdx} className="bg-purple-50 text-[#69318A] px-2 py-0.5 rounded-md font-bold text-[11px] border border-purple-100">
+                                        +{add}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {item.notes && (
+                                  <div className="text-xs text-amber-800 bg-amber-50 p-2 rounded-xl border border-amber-200 mt-1 pl-5">
+                                    <strong>Obs do item:</strong> {item.notes}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
-                      {/* Observações Gerais do Cliente */}
+                      {/* OBSERVAÇÃO GERAL DO CLIENTE */}
                       {order.notes && (
-                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-0.5">
-                          <strong className="block">Observação do Cliente:</strong>
-                          <p>{order.notes}</p>
+                        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-1">
+                          <strong className="block font-bold">Observação do Cliente:</strong>
+                          <p className="leading-relaxed">{order.notes}</p>
                         </div>
                       )}
 
-                      {/* Motivo do Cancelamento se Houver */}
+                      {/* MOTIVO DO CANCELAMENTO SE HOUVER */}
                       {order.status === 'cancelled' && order.cancellation_reason && (
-                        <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 space-y-0.5">
-                          <strong>Motivo do cancelamento:</strong> {order.cancellation_reason}
+                        <div className="p-3.5 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 space-y-1">
+                          <strong>Motivo do Cancelamento:</strong> {order.cancellation_reason}
                         </div>
                       )}
 
-                      {/* Observações Internas da Equipe */}
-                      <div className="p-3 bg-purple-50/50 rounded-2xl border border-purple-100 text-xs space-y-1.5">
+                      {/* OBSERVAÇÕES INTERNAS DA EQUIPE */}
+                      <div className="p-3.5 bg-purple-50/50 rounded-2xl border border-purple-100 text-xs space-y-1.5">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-[#69318A] flex items-center gap-1.5">
                             <FileText className="w-3.5 h-3.5" />
@@ -1671,7 +1866,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                               value={internalNoteText}
                               onChange={e => setInternalNoteText(e.target.value)}
                               placeholder="Ex: Cliente pediu copo extra, troco separado..."
-                              className="w-full p-2 bg-white border border-[#ECE8F0] rounded-xl text-xs outline-none"
+                              className="w-full p-2 bg-white border border-[#ECE8F0] rounded-xl text-xs outline-none focus:border-[#69318A]"
                             />
                             <div className="flex gap-2 justify-end">
                               <button
@@ -1695,29 +1890,30 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                         )}
                       </div>
 
-                      {/* Rodapé do Card com Valores e Ações */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#ECE8F0] text-xs">
-                        <div className="flex flex-wrap items-center gap-3">
+                      {/* RODAPÉ DO CARD COM FORMA DE PAGAMENTO, VALORES E AÇÕES RÁPIDAS */}
+                      <div className="flex flex-wrap items-center justify-between gap-4 pt-3.5 border-t border-[#ECE8F0] text-xs">
+                        <div className="flex flex-wrap items-center gap-4">
                           <div>
-                            <span className="text-[#726C74] block text-[10px]">Forma de Pagamento</span>
+                            <span className="text-[#726C74] block text-[10px] font-bold uppercase">Pagamento</span>
                             <span className="font-bold text-[#28242A] uppercase">{order.payment_method}</span>
                           </div>
                           <div>
-                            <span className="text-[#726C74] block text-[10px]">Subtotal / Frete</span>
-                            <span className="text-[#28242A]">{formatCurrency(order.subtotal)} + {formatCurrency(order.delivery_fee)}</span>
+                            <span className="text-[#726C74] block text-[10px] font-bold uppercase">Subtotal / Frete</span>
+                            <span className="text-[#28242A] font-medium">{formatCurrency(order.subtotal)} + {formatCurrency(order.delivery_fee)}</span>
                           </div>
                           <div>
-                            <span className="text-[#726C74] block text-[10px]">Total Geral</span>
-                            <span className="text-base font-black text-[#49245B] font-['DM_Sans']">{formatCurrency(order.total)}</span>
+                            <span className="text-[#726C74] block text-[10px] font-bold uppercase">Total do Pedido</span>
+                            <span className="text-base sm:text-lg font-black text-[#49245B] font-['DM_Sans']">{formatCurrency(order.total)}</span>
                           </div>
                         </div>
 
+                        {/* BOTÕES DE AÇÃO POR STATUS */}
                         <div className="flex flex-wrap items-center gap-2">
                           
                           {/* Indicador de Salvamento Ativo */}
                           {isUpdating && (
-                            <span className="text-xs text-[#69318A] font-bold flex items-center gap-1">
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span className="text-xs text-[#69318A] font-bold flex items-center gap-1.5 mr-2">
+                              <Loader2 className="w-4 h-4 animate-spin" />
                               <span>Salvando no banco...</span>
                             </span>
                           )}
@@ -1731,7 +1927,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                                 className="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-all border border-red-200 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                               >
                                 <X className="w-4 h-4" />
-                                <span>Cancelar pedido</span>
+                                <span>Cancelar</span>
                               </button>
                               <button
                                 disabled={isUpdating}
@@ -1739,7 +1935,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                                 className="px-4 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                               >
                                 <CheckCircle2 className="w-4 h-4" />
-                                <span>✓ Aceitar pedido</span>
+                                <span>✓ Aceitar e preparar</span>
                               </button>
                             </>
                           )}
@@ -1836,7 +2032,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                             <>
                               <button
                                 onClick={() => handleToggleArchive(orderId, order.is_archived || false)}
-                                className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-[#28242A] rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                                className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-[#28242A] rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
                               >
                                 <Archive className="w-3.5 h-3.5" />
                                 <span>{order.is_archived ? 'Desarquivar' : 'Arquivar'}</span>
@@ -1855,7 +2051,8 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                       </div>
                     </div>
                   );
-                })}
+                });
+              })()}
             </div>
           </div>
         )}
