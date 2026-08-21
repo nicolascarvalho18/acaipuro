@@ -122,11 +122,13 @@ export function getSupabaseClient(): SupabaseClient | null {
 
 export function normalizeOrderStatus(status: string): DbOrder['status'] {
   const s = String(status || '').toLowerCase().trim();
-  if (s === 'out_for_delivery') return 'delivering';
-  if (s === 'completed') return 'done';
-  if (['new', 'confirmed', 'preparing', 'delivering', 'ready_for_pickup', 'done', 'cancelled'].includes(s)) {
-    return s as DbOrder['status'];
-  }
+  if (['new', 'novo', 'novos', 'pending', 'open', 'created'].includes(s)) return 'new';
+  if (['confirmed', 'confirmado', 'confirmados', 'accepted', 'aceito'].includes(s)) return 'confirmed';
+  if (['preparing', 'em_preparo', 'preparo', 'preparando', 'in_production'].includes(s)) return 'preparing';
+  if (['delivering', 'out_for_delivery', 'saiu_para_entrega', 'em_entrega', 'a_caminho'].includes(s)) return 'delivering';
+  if (['ready_for_pickup', 'pronto', 'prontos', 'pronto_para_retirada', 'ready'].includes(s)) return 'ready_for_pickup';
+  if (['done', 'completed', 'entregue', 'concluido', 'concluído', 'finalizado', 'retirado'].includes(s)) return 'done';
+  if (['cancelled', 'canceled', 'cancelado', 'cancelados', 'rejected', 'recusado'].includes(s)) return 'cancelled';
   return 'new';
 }
 
@@ -310,6 +312,8 @@ export async function listAllOrders(options: ListOrdersOptions = {}): Promise<Db
   // Ordenar decrescente por data
   return filtered.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
 }
+
+export const listOrders = listAllOrders;
 
 export async function getOrder(orderIdOrNumberOrToken: string): Promise<DbOrder | null> {
   const supabase = getSupabaseClient();
