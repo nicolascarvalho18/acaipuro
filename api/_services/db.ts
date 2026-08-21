@@ -748,8 +748,6 @@ export async function updateInternalNotesDb(
   return false;
 }
 
-export const listOrders = listAllOrders;
-
 const SETTINGS_FILE = path.join(DATA_DIR, 'store_settings.json');
 
 const DEFAULT_STORE_SETTINGS = {
