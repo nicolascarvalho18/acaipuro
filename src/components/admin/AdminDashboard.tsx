@@ -61,7 +61,9 @@ import {
   FileText,
   ChevronDown,
   ChevronUp,
-  ExternalLink
+  ExternalLink,
+  Filter,
+  SlidersHorizontal
 } from 'lucide-react';
 import type { Product, CategoryInfo, AdditionalItem, ProductSize } from '../../types';
 import { AdminLiveDeliveries } from './AdminLiveDeliveries';
@@ -219,7 +221,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const [isLoading, setIsLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('all');
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState<string>('all');
   const [ordersPeriodFilter, setOrdersPeriodFilter] = useState<'todos' | 'hoje' | 'ontem' | '7dias'>('todos');
+  const [isFilterModalOpen, setIsFilterModalOpen] = useState(false);
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
   const [lastFetchTime, setLastFetchTime] = useState<Date>(new Date());
   const [searchQuery, setSearchQuery] = useState('');
@@ -818,10 +822,12 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     return orders.filter(o => !o.deleted_at && !o.is_archived && !['cancelled', 'done', 'completed'].includes(o.status));
   }, [orders]);
 
+  const countAll = orders.filter(o => !o.deleted_at && !o.is_archived).length;
   const countNew = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'new').length;
-  const countPreparing = orders.filter(o => !o.deleted_at && !o.is_archived && (o.status === 'preparing' || o.status === 'confirmed')).length;
-  const countDelivering = orders.filter(o => !o.deleted_at && !o.is_archived && (o.status === 'delivering' || o.status === 'out_for_delivery')).length;
+  const countConfirmed = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'confirmed').length;
+  const countPreparing = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'preparing').length;
   const countReadyPickup = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'ready_for_pickup').length;
+  const countDelivering = orders.filter(o => !o.deleted_at && !o.is_archived && (o.status === 'delivering' || o.status === 'out_for_delivery')).length;
   const countDone = orders.filter(o => !o.deleted_at && (o.status === 'done' || o.status === 'completed')).length;
   const countCancelled = orders.filter(o => !o.deleted_at && o.status === 'cancelled').length;
   const countArchived = orders.filter(o => !o.deleted_at && o.is_archived).length;
@@ -843,6 +849,36 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     const remMins = mins % 60;
     return `há ${hours}h ${remMins}min`;
   };
+
+  const handleExportOrdersCSV = useCallback(() => {
+    try {
+      const headers = ['Numero', 'Cliente', 'Telefone', 'Modalidade', 'Status', 'Total', 'Data_Hora', 'Forma_Pagamento', 'Endereco'];
+      const rows = orders.map(o => [
+        o.order_number,
+        `"${(o.customer_name || '').replace(/"/g, '""')}"`,
+        `"${(o.customer_phone || '').replace(/"/g, '""')}"`,
+        o.fulfillment_type === 'pickup' ? 'Retirada' : 'Entrega',
+        o.status,
+        `"${Number(o.total || 0).toFixed(2)}"`,
+        `"${new Date(o.created_at).toLocaleString('pt-BR')}"`,
+        `"${(o.payment_method || '').replace(/"/g, '""')}"`,
+        `"${(o.street ? `${o.street}, ${o.number || ''} ${o.neighborhood || ''} ${o.complement || ''}` : '').replace(/"/g, '""')}"`,
+      ]);
+
+      const csvContent = '\uFEFF' + [headers.join(';'), ...rows.map(r => r.join(';'))].join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', `pedidos_acai_puro_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setToastMessage({ text: 'Exportação CSV gerada com sucesso!', type: 'success' });
+    } catch {
+      alert('Erro ao exportar pedidos.');
+    }
+  }, [orders]);
 
   // Produtos mais vendidos no período
   const topProdutosPeriodo = useMemo(() => {
@@ -1385,28 +1421,24 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
 
         {/* 2. PEDIDOS EM TEMPO REAL */}
         {activeTab === 'pedidos' && (
-          <div className="p-4 sm:p-8 space-y-6">
+          <div className="p-4 sm:p-8 max-w-7xl mx-auto w-full space-y-6">
             
-            {/* CABEÇALHO DA PÁGINA */}
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white p-5 sm:p-6 rounded-3xl border border-[#ECE8F0] shadow-xs">
+            {/* CABEÇALHO SUPERIOR */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
-                <div className="flex items-center gap-2">
-                  <span className={`w-2.5 h-2.5 rounded-full ${isOpen ? 'bg-emerald-500 animate-ping' : 'bg-red-500'}`} />
-                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-[#69318A]">Painel de Atendimento</span>
-                </div>
-                <h1 className="text-xl sm:text-2xl font-black text-[#28242A] font-['DM_Sans'] mt-0.5">
-                  Pedidos em tempo real
+                <h1 className="text-2xl sm:text-3xl font-black text-gray-900 font-['DM_Sans'] tracking-tight">
+                  Pedidos
                 </h1>
-                <p className="text-xs sm:text-sm text-[#726C74] mt-0.5">
-                  Acompanhe e gerencie os pedidos recebidos pela loja
+                <p className="text-xs sm:text-sm text-gray-500 mt-0.5">
+                  Gerenciamento em tempo real de pedidos de delivery e retirada
                 </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5">
                 {/* Indicador Loja Aberta/Fechada + Botão de Toggle */}
-                <div className="flex items-center gap-2 px-3.5 py-2 rounded-2xl border text-xs font-bold transition-all bg-[#FCFAF7] border-[#ECE8F0]">
+                <div className="flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold bg-white border-gray-200 shadow-2xs">
                   <span className={`w-2 h-2 rounded-full ${isOpen ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'}`} />
-                  <span className={isOpen ? 'text-emerald-800' : 'text-red-700'}>
+                  <span className={isOpen ? 'text-emerald-700 font-bold' : 'text-red-700 font-bold'}>
                     {isOpen ? 'Loja aberta' : 'Loja fechada'}
                   </span>
                   <button
@@ -1414,146 +1446,204 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                       toggleStoreOpen(!isOpen);
                       logAudit('Disponibilidade Alterada', 'Loja', !isOpen ? 'Loja Aberta' : 'Loja Pausada');
                     }}
-                    className={`ml-1 px-2.5 py-1 rounded-xl text-[11px] font-bold cursor-pointer transition-colors ${
+                    className={`ml-1 px-2.5 py-0.5 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
                       isOpen 
-                        ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300' 
-                        : 'bg-emerald-100 hover:bg-emerald-200 text-emerald-900 border border-emerald-300'
+                        ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200' 
+                        : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200'
                     }`}
                   >
-                    {isOpen ? 'Pausar loja' : 'Abrir loja'}
+                    {isOpen ? 'Pausar' : 'Abrir'}
                   </button>
                 </div>
 
-                {/* Botão Som Ativo / Silenciado */}
+                {/* Botão Som */}
                 <button
                   onClick={() => setSoundEnabled(!soundEnabled)}
-                  className={`px-3.5 py-2 rounded-2xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
+                  className={`p-2 sm:px-3 sm:py-2 rounded-xl border text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-all ${
                     soundEnabled 
                       ? 'bg-purple-50 hover:bg-purple-100 text-[#69318A] border-purple-200' 
-                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600 border-gray-300'
+                      : 'bg-white hover:bg-gray-50 text-gray-600 border-gray-200'
                   }`}
                   title={soundEnabled ? 'Silenciar alertas sonoros' : 'Ativar alertas sonoros'}
                 >
                   {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-                  <span>{soundEnabled ? 'Som ativo' : 'Som mudo'}</span>
+                  <span className="hidden sm:inline">{soundEnabled ? 'Som ativo' : 'Som mudo'}</span>
                 </button>
 
-                {/* Botão de Atualização Manual */}
+                {/* Botão Atualizar */}
                 <button
                   onClick={() => {
                     fetchOrders();
                     setToastMessage({ text: 'Atualizando pedidos...', type: 'success' });
                   }}
                   disabled={isLoading}
-                  className="px-3.5 py-2 bg-[#FCFAF7] hover:bg-[#F3EDF6] text-[#726C74] hover:text-[#69318A] rounded-2xl border border-[#ECE8F0] cursor-pointer transition-all flex items-center gap-1.5 text-xs font-bold"
-                  title="Atualizar pedidos manualmente do banco"
+                  className="p-2 sm:px-3 sm:py-2 bg-white hover:bg-gray-50 text-gray-700 rounded-xl border border-gray-200 cursor-pointer transition-all flex items-center gap-1.5 text-xs font-semibold shadow-2xs"
+                  title="Atualizar pedidos agora"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin text-[#69318A]' : ''}`} />
-                  <span>Atualizar</span>
+                  <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin text-[#69318A]' : ''}`} />
+                  <span className="hidden sm:inline">Atualizar</span>
                 </button>
 
-                {/* Horário da Última Atualização */}
-                <div className="text-xs text-[#726C74] font-medium bg-[#FCFAF7] px-3.5 py-2 rounded-2xl border border-[#ECE8F0] flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-[#69318A]" />
-                  <span>Atualizado às {lastUpdateFormatted}</span>
-                </div>
+                {/* Botão Exportar CSV */}
+                <button
+                  onClick={handleExportOrdersCSV}
+                  className="px-4 py-2 bg-white hover:bg-gray-50 active:scale-95 text-gray-800 rounded-xl border border-gray-300 cursor-pointer transition-all flex items-center gap-2 text-xs sm:text-sm font-bold shadow-2xs"
+                  title="Exportar pedidos em formato CSV"
+                >
+                  <Download className="w-4 h-4 text-gray-700" />
+                  <span>Exportar</span>
+                </button>
               </div>
             </div>
 
-            {/* ÁREA DE BUSCA E FILTROS */}
-            <div className="bg-white p-4 sm:p-5 rounded-3xl border border-[#ECE8F0] space-y-3.5 shadow-xs">
-              <div className="flex flex-col md:flex-row gap-3">
-                {/* Campo de Busca */}
+            {/* BARRA DE BUSCA, PERÍODO E FILTROS */}
+            <div className="bg-white p-3 sm:p-4 rounded-2xl border border-gray-200 shadow-2xs space-y-3">
+              <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+                
+                {/* Campo "Digite o número do pedido" */}
                 <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-[#726C74] absolute left-3.5 top-3 pointer-events-none" />
+                  <Search className="w-4 h-4 text-gray-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="text"
-                    placeholder="Buscar por cliente, pedido #, telefone ou bairro..."
+                    placeholder="Digite o número do pedido, cliente ou telefone..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="w-full pl-10 pr-8 py-2.5 bg-[#FCFAF7] border border-[#ECE8F0] focus:border-[#69318A] focus:bg-white rounded-2xl text-xs sm:text-sm text-[#28242A] outline-none transition-all"
+                    className="w-full pl-10 pr-8 py-2 bg-gray-50/70 border border-gray-200 focus:border-gray-900 focus:bg-white rounded-xl text-xs sm:text-sm text-gray-900 outline-none transition-all placeholder:text-gray-400"
                   />
                   {searchQuery && (
                     <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 hover:text-gray-600">✕</button>
                   )}
                 </div>
 
-                {/* Filtro de Modalidade */}
-                <select
-                  value={fulfillmentFilter}
-                  onChange={(e) => setFulfillmentFilter(e.target.value)}
-                  className="py-2.5 px-3.5 bg-[#FCFAF7] border border-[#ECE8F0] focus:border-[#69318A] rounded-2xl text-xs font-bold text-[#28242A] outline-none cursor-pointer"
-                >
-                  <option value="all">Todas as modalidades</option>
-                  <option value="delivery">🛵 Apenas Entrega</option>
-                  <option value="pickup">🏪 Apenas Retirada</option>
-                </select>
+                {/* Seletor de Período com Ícone de Calendário */}
+                <div className="relative min-w-[150px]">
+                  <Calendar className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    value={ordersPeriodFilter}
+                    onChange={(e) => setOrdersPeriodFilter(e.target.value as any)}
+                    className="w-full pl-9 pr-7 py-2 bg-gray-50/70 border border-gray-200 focus:border-gray-900 focus:bg-white rounded-xl text-xs sm:text-sm font-medium text-gray-800 outline-none cursor-pointer appearance-none transition-all"
+                  >
+                    <option value="todos">Todos os períodos</option>
+                    <option value="hoje">Hoje</option>
+                    <option value="ontem">Ontem</option>
+                    <option value="7dias">Últimos 7 dias</option>
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
 
-                {/* Filtro de Período */}
-                <select
-                  value={ordersPeriodFilter}
-                  onChange={(e) => setOrdersPeriodFilter(e.target.value as any)}
-                  className="py-2.5 px-3.5 bg-[#FCFAF7] border border-[#ECE8F0] focus:border-[#69318A] rounded-2xl text-xs font-bold text-[#28242A] outline-none cursor-pointer"
+                {/* Botão de Filtros */}
+                <button
+                  onClick={() => setIsFilterModalOpen(!isFilterModalOpen)}
+                  className={`px-3.5 py-2 rounded-xl border text-xs sm:text-sm font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                    isFilterModalOpen || fulfillmentFilter !== 'all' || paymentMethodFilter !== 'all'
+                      ? 'bg-black text-white border-black shadow-xs'
+                      : 'bg-white hover:bg-gray-50 text-gray-700 border-gray-200 shadow-2xs'
+                  }`}
                 >
-                  <option value="todos">Todos os períodos</option>
-                  <option value="hoje">Hoje</option>
-                  <option value="ontem">Ontem</option>
-                  <option value="7dias">Últimos 7 dias</option>
-                </select>
+                  <SlidersHorizontal className="w-4 h-4" />
+                  <span>Filtros</span>
+                  {(fulfillmentFilter !== 'all' || paymentMethodFilter !== 'all') && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  )}
+                </button>
 
-                {/* Botão de Limpar Filtros se algum estiver ativo */}
-                {(searchQuery || fulfillmentFilter !== 'all' || ordersPeriodFilter !== 'todos') && (
+                {/* Botão de Limpar Filtros */}
+                {(searchQuery || fulfillmentFilter !== 'all' || paymentMethodFilter !== 'all' || ordersPeriodFilter !== 'todos') && (
                   <button
                     onClick={() => {
                       setSearchQuery('');
                       setFulfillmentFilter('all');
+                      setPaymentMethodFilter('all');
                       setOrdersPeriodFilter('todos');
                     }}
-                    className="px-3.5 py-2 text-xs font-bold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-2xl border border-red-200 transition-colors cursor-pointer whitespace-nowrap"
+                    className="px-3 py-2 text-xs font-semibold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 rounded-xl border border-red-200 transition-colors cursor-pointer whitespace-nowrap"
                   >
-                    Limpar filtros
+                    Limpar
                   </button>
                 )}
               </div>
 
-              {/* ABAS OBRIGATÓRIAS COM CONTADORES */}
-              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar text-xs">
-                {[
-                  { id: 'all', label: 'Todos ativos', count: activeOperationalOrders.length },
-                  { id: 'new', label: 'Novos', count: countNew, isAlert: true },
-                  { id: 'preparing', label: 'Em preparo', count: countPreparing },
-                  { id: 'delivering', label: 'Em entrega', count: countDelivering },
-                  { id: 'ready_for_pickup', label: 'Prontos para retirada', count: countReadyPickup },
-                  { id: 'done', label: 'Concluídos', count: countDone },
-                  { id: 'cancelled', label: 'Cancelados', count: countCancelled },
-                  { id: 'archived', label: 'Arquivados', count: countArchived },
-                ].map(tab => {
-                  const isSelected = statusFilter === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      onClick={() => setStatusFilter(tab.id)}
-                      className={`px-4 py-2.5 rounded-2xl font-bold whitespace-nowrap transition-all flex items-center gap-2 cursor-pointer ${
-                        isSelected
-                          ? 'bg-[#69318A] text-white shadow-xs'
-                          : 'bg-[#FCFAF7] text-[#726C74] hover:bg-[#F3EDF6] hover:text-[#28242A] border border-[#ECE8F0]'
-                      }`}
+              {/* Menu Retrátil de Filtros Avançados */}
+              {isFilterModalOpen && (
+                <div className="pt-3 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-gray-50/50 p-3 rounded-xl">
+                  <div>
+                    <label className="block font-bold text-gray-700 mb-1">Modalidade:</label>
+                    <div className="flex gap-2">
+                      {[
+                        { id: 'all', label: 'Todas' },
+                        { id: 'delivery', label: '🛵 Entrega' },
+                        { id: 'pickup', label: '🏪 Retirada' }
+                      ].map(m => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setFulfillmentFilter(m.id)}
+                          className={`flex-1 py-1.5 px-2 rounded-lg font-bold transition-all ${
+                            fulfillmentFilter === m.id
+                              ? 'bg-black text-white'
+                              : 'bg-white text-gray-700 border border-gray-200 hover:bg-gray-100'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-gray-700 mb-1">Forma de Pagamento:</label>
+                    <select
+                      value={paymentMethodFilter}
+                      onChange={e => setPaymentMethodFilter(e.target.value)}
+                      className="w-full p-2 bg-white border border-gray-200 rounded-lg font-medium text-gray-800 outline-none cursor-pointer"
                     >
-                      <span>{tab.label}</span>
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
-                        isSelected 
-                          ? 'bg-white/25 text-white' 
-                          : (tab.isAlert && tab.count > 0 ? 'bg-red-500 text-white animate-pulse' : 'bg-[#ECE8F0] text-[#28242A]')
-                      }`}>
-                        {tab.count}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+                      <option value="all">Todas as formas de pagamento</option>
+                      <option value="pix">Pix</option>
+                      <option value="card_online">Cartão Online</option>
+                      <option value="delivery">Pagamento na Entrega/Retirada</option>
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* LISTAGEM DE CARDS DE PEDIDOS */}
+            {/* ABAS ARREDONDADAS (PILLS) */}
+            <div className="flex gap-2 overflow-x-auto pb-1.5 no-scrollbar text-xs sm:text-sm">
+              {[
+                { id: 'all', label: 'Todos', count: countAll },
+                { id: 'new', label: 'Novos', count: countNew, isAlert: true },
+                { id: 'confirmed', label: 'Confirmados', count: countConfirmed },
+                { id: 'preparing', label: 'Em preparo', count: countPreparing },
+                { id: 'ready_for_pickup', label: 'Prontos', count: countReadyPickup },
+                { id: 'delivering', label: 'Em entrega', count: countDelivering },
+                { id: 'done', label: 'Concluídos', count: countDone },
+                { id: 'cancelled', label: 'Cancelados', count: countCancelled },
+              ].map(tab => {
+                const isSelected = statusFilter === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setStatusFilter(tab.id)}
+                    className={`px-4 sm:px-5 py-2 rounded-full font-bold whitespace-nowrap transition-all flex items-center gap-1.5 cursor-pointer ${
+                      isSelected
+                        ? 'bg-black text-white shadow-xs'
+                        : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
+                      isSelected 
+                        ? 'bg-white/20 text-white' 
+                        : (tab.isAlert && tab.count > 0 ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-100 text-gray-700')
+                    }`}>
+                      {tab.count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* LISTAGEM DE CARDS OU TABELA */}
             <div className="space-y-4">
               {(() => {
                 const filteredOrdersList = orders
@@ -1562,18 +1652,18 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
 
                     // 1. Filtro por Aba de Status
                     let matchesStatus = false;
-                    if (statusFilter === 'archived') {
-                      matchesStatus = !!order.is_archived;
-                    } else if (statusFilter === 'all') {
-                      matchesStatus = !order.is_archived && !['cancelled', 'done', 'completed'].includes(order.status);
+                    if (statusFilter === 'all') {
+                      matchesStatus = !order.is_archived;
                     } else if (statusFilter === 'new') {
                       matchesStatus = !order.is_archived && order.status === 'new';
+                    } else if (statusFilter === 'confirmed') {
+                      matchesStatus = !order.is_archived && order.status === 'confirmed';
                     } else if (statusFilter === 'preparing') {
-                      matchesStatus = !order.is_archived && (order.status === 'preparing' || order.status === 'confirmed');
-                    } else if (statusFilter === 'delivering') {
-                      matchesStatus = !order.is_archived && (order.status === 'delivering' || order.status === 'out_for_delivery');
+                      matchesStatus = !order.is_archived && order.status === 'preparing';
                     } else if (statusFilter === 'ready_for_pickup') {
                       matchesStatus = !order.is_archived && order.status === 'ready_for_pickup';
+                    } else if (statusFilter === 'delivering') {
+                      matchesStatus = !order.is_archived && (order.status === 'delivering' || order.status === 'out_for_delivery');
                     } else if (statusFilter === 'done') {
                       matchesStatus = order.status === 'done' || order.status === 'completed';
                     } else if (statusFilter === 'cancelled') {
@@ -1584,12 +1674,19 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
 
                     if (!matchesStatus) return false;
 
-                    // 2. Filtro por Modalidade (Entrega / Retirada)
+                    // 2. Filtro por Modalidade
                     if (fulfillmentFilter !== 'all' && order.fulfillment_type !== fulfillmentFilter) {
                       return false;
                     }
 
-                    // 3. Filtro por Período
+                    // 3. Filtro por Forma de Pagamento
+                    if (paymentMethodFilter !== 'all') {
+                      if (paymentMethodFilter === 'pix' && order.payment_method !== 'pix') return false;
+                      if (paymentMethodFilter === 'card_online' && order.payment_method !== 'card_online') return false;
+                      if (paymentMethodFilter === 'delivery' && !['delivery', 'money', 'card_delivery'].includes(order.payment_method)) return false;
+                    }
+
+                    // 4. Filtro por Período
                     if (ordersPeriodFilter === 'hoje') {
                       if (getSaoPauloDate(order.created_at) !== todaySP) return false;
                     } else if (ordersPeriodFilter === 'ontem') {
@@ -1600,7 +1697,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                       if (new Date(order.created_at).getTime() < d7.getTime()) return false;
                     }
 
-                    // 4. Busca por texto
+                    // 5. Busca por texto
                     if (searchQuery.trim()) {
                       const q = searchQuery.toLowerCase().trim();
                       const cleanPhone = (order.customer_phone || '').replace(/\D/g, '');
@@ -1615,29 +1712,28 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                     return true;
                   })
                   .sort((a, b) => {
-                    // Pedidos ativos e novos ordenados do mais antigo para o mais recente para não atrasar nenhum
-                    const isOperationalA = !['done', 'completed', 'cancelled'].includes(a.status);
-                    const isOperationalB = !['done', 'completed', 'cancelled'].includes(b.status);
-                    if (isOperationalA && isOperationalB) {
-                      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-                    }
+                    // Mais recentes primeiro
                     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
                   });
 
+                // Estado Vazio
                 if (filteredOrdersList.length === 0) {
                   return (
-                    <div className="bg-white rounded-3xl border border-[#ECE8F0] p-12 text-center space-y-2 shadow-xs">
-                      <div className="w-12 h-12 rounded-full bg-purple-50 text-[#69318A] flex items-center justify-center mx-auto">
-                        <ShoppingBag className="w-6 h-6 stroke-[1.8]" />
+                    <div className="bg-white rounded-2xl border border-gray-200 p-16 text-center space-y-3 shadow-2xs">
+                      <div className="w-14 h-14 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center mx-auto">
+                        <ShoppingBag className="w-7 h-7 stroke-[1.5]" />
                       </div>
-                      <h3 className="text-sm font-bold text-[#28242A]">Nenhum pedido nesta etapa.</h3>
-                      <p className="text-xs text-[#726C74]">
-                        Novos pedidos recebidos aparecerão automaticamente aqui em tempo real.
-                      </p>
+                      <div className="space-y-1">
+                        <h3 className="text-base font-bold text-gray-900">Nenhum pedido encontrado</h3>
+                        <p className="text-xs sm:text-sm text-gray-500 max-w-sm mx-auto">
+                          Não há pedidos nesta etapa ou com os filtros aplicados. Novos pedidos aparecerão aqui em tempo real.
+                        </p>
+                      </div>
                     </div>
                   );
                 }
 
+                // Renderização dos Cards dos Pedidos
                 return filteredOrdersList.map(order => {
                   const orderId = order.id || order.order_number;
                   const isUpdating = updatingOrderId === orderId;
@@ -1646,105 +1742,87 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   const isNew = order.status === 'new';
                   const isPickup = order.fulfillment_type === 'pickup';
                   const isExpanded = !!expandedOrderIds[orderId];
-                  
-                  // Pedidos ativos com mais de 35 minutos são considerados atrasados
-                  const diffMinutes = Math.floor((Date.now() - new Date(order.created_at).getTime()) / 60000);
-                  const isDelayed = !['done', 'completed', 'cancelled'].includes(order.status) && diffMinutes > 35;
 
                   return (
                     <div
                       key={orderId}
-                      className={`bg-white rounded-3xl border transition-all p-5 sm:p-6 space-y-4 ${
-                        isNew 
-                          ? 'border-[#69318A] shadow-md ring-2 ring-[#69318A]/20 bg-purple-50/10' 
-                          : isDelayed 
-                            ? 'border-amber-400 bg-amber-50/20 shadow-md' 
-                            : 'border-[#ECE8F0] shadow-xs'
-                      }`}
+                      className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6 space-y-4 hover:border-gray-300 transition-all shadow-xs"
                     >
-                      {/* CABEÇALHO DO CARD */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-[#ECE8F0]">
+                      {/* Cabeçalho do Card */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 pb-3.5 border-b border-gray-100">
                         <div className="flex flex-wrap items-center gap-2.5">
-                          <span className="text-lg sm:text-xl font-black text-[#28242A] font-['DM_Sans']">
+                          <span className="text-lg sm:text-xl font-bold text-gray-900 font-['DM_Sans']">
                             Pedido #{order.order_number}
                           </span>
                           
-                          <span className={`px-3 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 ${statusInfo.bg} ${statusInfo.text}`}>
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${statusInfo.bg} ${statusInfo.text}`}>
                             <StatusIcon className="w-3.5 h-3.5" />
                             <span>{statusInfo.label}</span>
                           </span>
 
-                          <span className={`px-2.5 py-1 rounded-xl text-xs font-bold ${
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold ${
                             isPickup ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-blue-50 text-blue-800 border border-blue-200'
                           }`}>
-                            {isPickup ? '🏪 Retirada no Balcão' : '🛵 Entrega em Domicílio'}
+                            {isPickup ? '🏪 Retirada' : '🛵 Entrega'}
                           </span>
 
                           {isNew && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-[#69318A] text-white text-[10px] font-extrabold animate-pulse">
-                              NOVO!
-                            </span>
-                          )}
-
-                          {isDelayed && (
-                            <span className="px-2.5 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-extrabold flex items-center gap-1 animate-pulse">
-                              <AlertTriangle className="w-3 h-3" />
-                              <span>ATRASADO ({diffMinutes} min)</span>
+                            <span className="px-2 py-0.5 rounded-full bg-purple-700 text-white text-[10px] font-extrabold animate-pulse">
+                              NOVO
                             </span>
                           )}
                         </div>
 
-                        <div className="flex items-center gap-3 text-xs text-[#726C74]">
-                          <span className="flex items-center gap-1 font-medium">
-                            <Clock className="w-3.5 h-3.5 text-[#69318A]" />
-                            <span>Recebido às {new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ({getElapsedTime(order.created_at)})</span>
+                        <div className="flex items-center gap-3 text-xs text-gray-500">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-gray-400" />
+                            <span>{new Date(order.created_at).toLocaleDateString('pt-BR')} às {new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} ({getElapsedTime(order.created_at)})</span>
                           </span>
 
                           <button
                             onClick={() => printThermalReceipt(order)}
-                            title="Imprimir Comanda do Pedido"
-                            className="p-2 bg-[#FCFAF7] hover:bg-[#F3EDF6] text-[#726C74] hover:text-[#69318A] rounded-xl border border-[#ECE8F0] cursor-pointer transition-colors flex items-center gap-1 text-xs font-bold"
+                            title="Imprimir comanda"
+                            className="p-1.5 hover:bg-gray-100 text-gray-600 rounded-lg border border-gray-200 cursor-pointer transition-colors"
                           >
-                            <Printer className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">Imprimir</span>
+                            <Printer className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
 
-                      {/* INFORMAÇÕES DO CLIENTE E ENDEREÇO */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs bg-[#FCFAF7] p-4 rounded-2xl border border-[#ECE8F0]">
-                        <div className="space-y-1.5">
-                          <div className="font-bold text-[#28242A] text-sm flex items-center gap-2">
+                      {/* Informações do Cliente e Endereço */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 text-xs sm:text-sm bg-gray-50/70 p-4 rounded-xl border border-gray-100">
+                        <div className="space-y-1">
+                          <div className="font-bold text-gray-900 flex items-center gap-2">
                             <span>👤 {order.customer_name}</span>
                             {order.customer_phone && (
                               <a
                                 href={`https://wa.me/55${order.customer_phone.replace(/\D/g, '')}`}
                                 target="_blank"
                                 rel="noreferrer"
-                                className="text-emerald-700 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-0.5 rounded-lg border border-emerald-200 flex items-center gap-1 font-bold text-[11px] transition-colors"
+                                className="text-emerald-700 hover:text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200 font-semibold text-[11px] flex items-center gap-1"
                               >
                                 💬 WhatsApp
                               </a>
                             )}
                           </div>
-                          <div className="text-[#726C74] flex items-center gap-1">
-                            <Phone className="w-3 h-3" />
+                          <div className="text-gray-500 flex items-center gap-1 text-xs">
+                            <Phone className="w-3.5 h-3.5 text-gray-400" />
                             <span>{order.customer_phone || 'Telefone não informado'}</span>
                           </div>
                         </div>
 
-                        <div className="space-y-1.5">
-                          <div className="font-bold text-[#28242A] text-sm flex items-center gap-1.5">
-                            {isPickup ? <Store className="w-4 h-4 text-amber-700" /> : <MapPin className="w-4 h-4 text-[#69318A]" />}
-                            <span>{isPickup ? 'Retirada na Loja:' : 'Endereço de Entrega:'}</span>
+                        <div className="space-y-1">
+                          <div className="font-bold text-gray-900 flex items-center gap-1.5">
+                            {isPickup ? <Store className="w-4 h-4 text-amber-700" /> : <MapPin className="w-4 h-4 text-blue-700" />}
+                            <span>{isPickup ? 'Retirada na Loja' : 'Endereço de Entrega:'}</span>
                           </div>
-                          <div className="text-[#726C74] leading-relaxed">
+                          <div className="text-gray-600 text-xs leading-relaxed">
                             {isPickup ? (
-                              <span className="font-medium text-amber-900">Retirada direta no balcão da açaiteria</span>
+                              <span className="font-medium text-amber-900">Retirada no balcão da açaiteria</span>
                             ) : (
                               <span>
-                                <strong className="text-[#28242A]">{order.street ? `${order.street}, Nº ${order.number || 'S/N'}` : 'Endereço não informado'}</strong>
-                                {order.neighborhood ? ` - Bairro: ${order.neighborhood}` : ''}
+                                <strong className="text-gray-900">{order.street ? `${order.street}, Nº ${order.number || 'S/N'}` : 'Endereço não informado'}</strong>
+                                {order.neighborhood ? ` - ${order.neighborhood}` : ''}
                                 {order.complement ? ` (${order.complement})` : ''}
                               </span>
                             )}
@@ -1752,70 +1830,70 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                         </div>
                       </div>
 
-                      {/* ITENS DO PEDIDO (RESUMO INICIAL + EXPANSÃO DE DETALHES) */}
-                      <div className="space-y-2.5">
+                      {/* Itens do Pedido */}
+                      <div className="space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-xs font-extrabold text-[#726C74] uppercase tracking-wider">
-                            Itens do Pedido ({order.items?.length || 0})
+                          <span className="text-xs font-bold text-gray-600 uppercase tracking-wider">
+                            Itens ({order.items?.length || 0})
                           </span>
                           <button
                             onClick={() => toggleExpandOrder(orderId)}
-                            className="text-xs font-bold text-[#69318A] hover:text-[#572185] flex items-center gap-1 cursor-pointer"
+                            className="text-xs font-semibold text-gray-600 hover:text-gray-900 flex items-center gap-1 cursor-pointer"
                           >
                             <span>{isExpanded ? 'Ocultar detalhes' : 'Ver detalhes'}</span>
                             {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                           </button>
                         </div>
 
-                        {/* Visualização Resumida quando recolhido */}
+                        {/* Itens Resumidos */}
                         {!isExpanded && (
-                          <div className="p-3 bg-[#FCFAF7] rounded-2xl border border-[#ECE8F0] text-xs text-[#28242A] flex flex-wrap gap-2">
+                          <div className="p-3 bg-gray-50/50 rounded-xl border border-gray-100 text-xs text-gray-800 flex flex-wrap gap-2">
                             {(order.items || []).map((item, idx) => (
-                              <span key={idx} className="bg-white px-2.5 py-1 rounded-xl border border-[#ECE8F0] font-medium shadow-2xs">
+                              <span key={idx} className="bg-white px-2.5 py-1 rounded-lg border border-gray-200 font-medium">
                                 <strong className="text-[#69318A] mr-1">{item.quantity}x</strong>
                                 {item.name}
-                                {item.size && <span className="text-[#726C74] ml-1">({item.size})</span>}
+                                {item.size && <span className="text-gray-500 ml-1">({item.size})</span>}
                               </span>
                             ))}
                           </div>
                         )}
 
-                        {/* Visualização Detalhada quando expandido */}
+                        {/* Itens Detalhados */}
                         {isExpanded && (
-                          <div className="divide-y divide-[#ECE8F0] border border-[#ECE8F0] rounded-2xl bg-white p-3 space-y-2">
+                          <div className="divide-y divide-gray-100 border border-gray-200 rounded-xl bg-white p-3 space-y-2">
                             {(order.items || []).map((item, idx) => (
-                              <div key={idx} className="py-2.5 first:pt-1 last:pb-1 text-xs space-y-1.5">
+                              <div key={idx} className="py-2.5 first:pt-1 last:pb-1 text-xs space-y-1">
                                 <div className="flex justify-between items-start">
-                                  <div className="font-bold text-[#28242A] text-sm">
+                                  <div className="font-bold text-gray-900">
                                     <span className="text-[#69318A] font-extrabold mr-1.5">{item.quantity}x</span>
                                     {item.name}
                                     {item.size && (
-                                      <span className="ml-1.5 text-xs text-[#726C74] font-normal">({item.size})</span>
+                                      <span className="ml-1.5 text-xs text-gray-500 font-normal">({item.size})</span>
                                     )}
                                   </div>
-                                  <span className="font-bold text-[#49245B] font-['DM_Sans'] text-sm">
+                                  <span className="font-bold text-gray-900 font-['DM_Sans']">
                                     {formatCurrency(item.totalPrice || item.unitPrice * item.quantity)}
                                   </span>
                                 </div>
 
                                 {item.base && (
-                                  <div className="text-xs text-[#726C74] pl-5">
-                                    Base: <span className="font-semibold text-[#28242A]">{item.base}</span>
+                                  <div className="text-xs text-gray-500 pl-5">
+                                    Base: <span className="font-semibold text-gray-800">{item.base}</span>
                                   </div>
                                 )}
                                 {item.additionals && item.additionals.length > 0 && (
-                                  <div className="text-xs text-[#726C74] pl-5 flex flex-wrap gap-1 items-center">
+                                  <div className="text-xs text-gray-500 pl-5 flex flex-wrap gap-1 items-center">
                                     <span className="font-semibold">Adicionais:</span>
                                     {item.additionals.map((add, aIdx) => (
-                                      <span key={aIdx} className="bg-purple-50 text-[#69318A] px-2 py-0.5 rounded-md font-bold text-[11px] border border-purple-100">
+                                      <span key={aIdx} className="bg-purple-50 text-[#69318A] px-2 py-0.5 rounded font-medium text-[11px]">
                                         +{add}
                                       </span>
                                     ))}
                                   </div>
                                 )}
                                 {item.notes && (
-                                  <div className="text-xs text-amber-800 bg-amber-50 p-2 rounded-xl border border-amber-200 mt-1 pl-5">
-                                    <strong>Obs do item:</strong> {item.notes}
+                                  <div className="text-xs text-amber-800 bg-amber-50 p-1.5 rounded-lg border border-amber-200 mt-1 pl-5">
+                                    <strong>Obs:</strong> {item.notes}
                                   </div>
                                 )}
                               </div>
@@ -1824,97 +1902,45 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                         )}
                       </div>
 
-                      {/* OBSERVAÇÃO GERAL DO CLIENTE */}
+                      {/* Observações Gerais do Cliente */}
                       {order.notes && (
-                        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-1">
-                          <strong className="block font-bold">Observação do Cliente:</strong>
-                          <p className="leading-relaxed">{order.notes}</p>
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-0.5">
+                          <strong className="block">Observação do Cliente:</strong>
+                          <p>{order.notes}</p>
                         </div>
                       )}
 
-                      {/* MOTIVO DO CANCELAMENTO SE HOUVER */}
+                      {/* Motivo do Cancelamento se Houver */}
                       {order.status === 'cancelled' && order.cancellation_reason && (
-                        <div className="p-3.5 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 space-y-1">
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 space-y-0.5">
                           <strong>Motivo do Cancelamento:</strong> {order.cancellation_reason}
                         </div>
                       )}
 
-                      {/* OBSERVAÇÕES INTERNAS DA EQUIPE */}
-                      <div className="p-3.5 bg-purple-50/50 rounded-2xl border border-purple-100 text-xs space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="font-bold text-[#69318A] flex items-center gap-1.5">
-                            <FileText className="w-3.5 h-3.5" />
-                            <span>Observações Internas (Equipe):</span>
-                          </span>
-                          {editingNotesId !== orderId && (
-                            <button
-                              onClick={() => {
-                                setEditingNotesId(orderId);
-                                setInternalNoteText(order.internal_notes || '');
-                              }}
-                              className="text-[#69318A] hover:underline font-bold text-[11px] cursor-pointer"
-                            >
-                              {order.internal_notes ? 'Editar nota' : '+ Adicionar nota'}
-                            </button>
-                          )}
-                        </div>
-
-                        {editingNotesId === orderId ? (
-                          <div className="space-y-2 pt-1">
-                            <textarea
-                              rows={2}
-                              value={internalNoteText}
-                              onChange={e => setInternalNoteText(e.target.value)}
-                              placeholder="Ex: Cliente pediu copo extra, troco separado..."
-                              className="w-full p-2 bg-white border border-[#ECE8F0] rounded-xl text-xs outline-none focus:border-[#69318A]"
-                            />
-                            <div className="flex gap-2 justify-end">
-                              <button
-                                onClick={() => setEditingNotesId(null)}
-                                className="px-3 py-1 bg-gray-200 text-[#28242A] rounded-lg text-xs font-semibold cursor-pointer"
-                              >
-                                Cancelar
-                              </button>
-                              <button
-                                onClick={() => handleSaveNotes(orderId)}
-                                className="px-3 py-1 bg-[#69318A] text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
-                              >
-                                Salvar Nota
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <p className="text-[#726C74] italic">
-                            {order.internal_notes || 'Nenhuma nota interna registrada.'}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* RODAPÉ DO CARD COM FORMA DE PAGAMENTO, VALORES E AÇÕES RÁPIDAS */}
-                      <div className="flex flex-wrap items-center justify-between gap-4 pt-3.5 border-t border-[#ECE8F0] text-xs">
+                      {/* Rodapé do Card com Valores e Ações */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-gray-100 text-xs">
                         <div className="flex flex-wrap items-center gap-4">
                           <div>
-                            <span className="text-[#726C74] block text-[10px] font-bold uppercase">Pagamento</span>
-                            <span className="font-bold text-[#28242A] uppercase">{order.payment_method}</span>
+                            <span className="text-gray-500 block text-[10px] uppercase font-bold">Pagamento</span>
+                            <span className="font-bold text-gray-900 uppercase">{order.payment_method}</span>
                           </div>
                           <div>
-                            <span className="text-[#726C74] block text-[10px] font-bold uppercase">Subtotal / Frete</span>
-                            <span className="text-[#28242A] font-medium">{formatCurrency(order.subtotal)} + {formatCurrency(order.delivery_fee)}</span>
+                            <span className="text-gray-500 block text-[10px] uppercase font-bold">Subtotal / Frete</span>
+                            <span className="text-gray-700 font-medium">{formatCurrency(order.subtotal)} + {formatCurrency(order.delivery_fee)}</span>
                           </div>
                           <div>
-                            <span className="text-[#726C74] block text-[10px] font-bold uppercase">Total do Pedido</span>
-                            <span className="text-base sm:text-lg font-black text-[#49245B] font-['DM_Sans']">{formatCurrency(order.total)}</span>
+                            <span className="text-gray-500 block text-[10px] uppercase font-bold">Total</span>
+                            <span className="text-base sm:text-lg font-black text-gray-900 font-['DM_Sans']">{formatCurrency(order.total)}</span>
                           </div>
                         </div>
 
-                        {/* BOTÕES DE AÇÃO POR STATUS */}
+                        {/* Botões de Ação por Status */}
                         <div className="flex flex-wrap items-center gap-2">
                           
-                          {/* Indicador de Salvamento Ativo */}
                           {isUpdating && (
-                            <span className="text-xs text-[#69318A] font-bold flex items-center gap-1.5 mr-2">
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                              <span>Salvando no banco...</span>
+                            <span className="text-xs text-gray-600 font-semibold flex items-center gap-1.5 mr-2">
+                              <Loader2 className="w-4 h-4 animate-spin text-gray-900" />
+                              <span>Atualizando...</span>
                             </span>
                           )}
 
@@ -1924,24 +1950,44 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                               <button
                                 disabled={isUpdating}
                                 onClick={() => setCancellingOrderId(order.order_number)}
-                                className="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-all border border-red-200 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                                className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-all border border-red-200 cursor-pointer disabled:opacity-50"
                               >
-                                <X className="w-4 h-4" />
-                                <span>Cancelar</span>
+                                Cancelar
                               </button>
                               <button
                                 disabled={isUpdating}
-                                onClick={() => handleUpdateStatus(orderId, 'preparing')}
-                                className="px-4 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                                onClick={() => handleUpdateStatus(orderId, 'confirmed')}
+                                className="px-4 py-2 bg-black hover:bg-zinc-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                               >
                                 <CheckCircle2 className="w-4 h-4" />
-                                <span>✓ Aceitar e preparar</span>
+                                <span>Confirmar pedido</span>
                               </button>
                             </>
                           )}
 
-                          {/* 2. SE STATUS === EM PREPARO */}
-                          {(order.status === 'preparing' || order.status === 'confirmed') && (
+                          {/* 2. SE STATUS === CONFIRMADO */}
+                          {order.status === 'confirmed' && (
+                            <>
+                              <button
+                                disabled={isUpdating}
+                                onClick={() => setCancellingOrderId(order.order_number)}
+                                className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-all border border-red-200 cursor-pointer disabled:opacity-50"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                disabled={isUpdating}
+                                onClick={() => handleUpdateStatus(orderId, 'preparing')}
+                                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                <ChefHat className="w-4 h-4" />
+                                <span>Iniciar preparo</span>
+                              </button>
+                            </>
+                          )}
+
+                          {/* 3. SE STATUS === EM PREPARO */}
+                          {order.status === 'preparing' && (
                             <>
                               <button
                                 disabled={isUpdating}
@@ -1957,65 +2003,34 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                                   className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                                 >
                                   <Store className="w-4 h-4" />
-                                  <span>🏪 Pronto para retirada</span>
+                                  <span>Pronto para retirada</span>
                                 </button>
                               ) : (
-                                <>
-                                  <button
-                                    disabled={isUpdating}
-                                    onClick={async () => {
-                                      try {
-                                        const data = await createDeliveryOffer(order.order_number, order.id, order.delivery_fee || 5.00);
-                                        if (data && data.success) {
-                                          setToastMessage({ text: `Corrida do pedido #${order.order_number} despachada para os entregadores!`, type: 'success' });
-                                          setActiveTab('entregadores');
-                                        } else {
-                                          alert(data?.error || 'Erro ao despachar corrida.');
-                                        }
-                                      } catch {
-                                        alert('Erro ao despachar corrida.');
-                                      }
-                                    }}
-                                    className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-[#69318A] border border-purple-200 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                                  >
-                                    <MapPin className="w-3.5 h-3.5" />
-                                    <span>📍 Despachar Entregador</span>
-                                  </button>
-                                  <button
-                                    disabled={isUpdating}
-                                    onClick={() => handleUpdateStatus(orderId, 'delivering')}
-                                    className="px-4 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                                  >
-                                    <Truck className="w-4 h-4" />
-                                    <span>🛵 Saiu para entrega</span>
-                                  </button>
-                                </>
+                                <button
+                                  disabled={isUpdating}
+                                  onClick={() => handleUpdateStatus(orderId, 'delivering')}
+                                  className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                  <Truck className="w-4 h-4" />
+                                  <span>Saiu para entrega</span>
+                                </button>
                               )}
                             </>
                           )}
 
-                          {/* 3. SE STATUS === EM ENTREGA */}
+                          {/* 4. SE STATUS === EM ENTREGA */}
                           {(order.status === 'delivering' || order.status === 'out_for_delivery') && (
-                            <>
-                              <button
-                                onClick={() => setActiveTab('entregadores')}
-                                className="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-[#69318A] rounded-xl text-xs font-bold border border-purple-200 cursor-pointer flex items-center gap-1"
-                              >
-                                <MapPin className="w-3.5 h-3.5" />
-                                <span>Ver no Mapa GPS</span>
-                              </button>
-                              <button
-                                disabled={isUpdating}
-                                onClick={() => handleUpdateStatus(orderId, 'done')}
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                              >
-                                <CheckCircle2 className="w-4 h-4" />
-                                <span>✓ Confirmar entrega</span>
-                              </button>
-                            </>
+                            <button
+                              disabled={isUpdating}
+                              onClick={() => handleUpdateStatus(orderId, 'done')}
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Confirmar entrega</span>
+                            </button>
                           )}
 
-                          {/* 4. SE STATUS === PRONTO PARA RETIRADA */}
+                          {/* 5. SE STATUS === PRONTO PARA RETIRADA */}
                           {order.status === 'ready_for_pickup' && (
                             <button
                               disabled={isUpdating}
@@ -2023,16 +2038,16 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                             >
                               <CheckCircle2 className="w-4 h-4" />
-                              <span>✓ Confirmar retirada</span>
+                              <span>Confirmar retirada</span>
                             </button>
                           )}
 
-                          {/* 5 & 6. CONCLUÍDOS / CANCELADOS */}
+                          {/* 6. CONCLUÍDOS / CANCELADOS */}
                           {['done', 'completed', 'cancelled'].includes(order.status) && (
                             <>
                               <button
                                 onClick={() => handleToggleArchive(orderId, order.is_archived || false)}
-                                className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-[#28242A] rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                                className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
                               >
                                 <Archive className="w-3.5 h-3.5" />
                                 <span>{order.is_archived ? 'Desarquivar' : 'Arquivar'}</span>
