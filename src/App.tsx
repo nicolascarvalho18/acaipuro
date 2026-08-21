@@ -47,7 +47,7 @@ const MainContent: React.FC = () => {
 
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(() => {
     if (typeof window === 'undefined') return false;
-    return !!sessionStorage.getItem('admin_auth_token');
+    return !!sessionStorage.getItem('admin_auth_token') || !!localStorage.getItem('admin_auth_token');
   });
 
   // Rota do Entregador (/entregador)
@@ -66,19 +66,19 @@ const MainContent: React.FC = () => {
       
       const isAdm = path.toLowerCase().includes('/admin') || search.has('admin');
       setIsAdminRoute(isAdm);
-      setIsAdminAuthenticated(!!sessionStorage.getItem('admin_auth_token'));
+      setIsAdminAuthenticated(!!sessionStorage.getItem('admin_auth_token') || !!localStorage.getItem('admin_auth_token'));
 
       const isDrv = path.toLowerCase().includes('/entregador') || search.has('entregador') || search.has('driver');
       setIsDriverRoute(isDrv);
 
-      // Verificar rota de pedido /pedido/PED-XXXX ou ?pedido=PED-XXXX
-      const pedidoMatch = path.match(/\/pedido\/([a-zA-Z0-9_-]+)/i);
-      const orderFromQuery = search.get('pedido') || search.get('order');
-      const orderNumber = pedidoMatch ? pedidoMatch[1] : orderFromQuery;
-      const token = search.get('token') || undefined;
+      // Verificar rota de pedido /pedido/PED-XXXX, /acompanhar/:token ou ?pedido=PED-XXXX
+      const pedidoMatch = path.match(/\/(?:pedido|acompanhar|tracking)\/([a-zA-Z0-9_-]+)/i);
+      const orderFromQuery = search.get('pedido') || search.get('order') || search.get('tracking');
+      const orderKey = pedidoMatch ? pedidoMatch[1] : orderFromQuery;
+      const token = search.get('token') || (orderKey?.startsWith('tok_') ? orderKey : undefined);
 
-      if (orderNumber) {
-        openOrderTracking(orderNumber, token);
+      if (orderKey) {
+        openOrderTracking(orderKey, token);
         setIsTrackingModalOpen(true);
       } else if (activeTrackingOrder) {
         setIsTrackingModalOpen(true);
@@ -92,7 +92,7 @@ const MainContent: React.FC = () => {
 
   const handleOpenAdmin = () => {
     setIsAdminRoute(true);
-    const token = sessionStorage.getItem('admin_auth_token');
+    const token = sessionStorage.getItem('admin_auth_token') || localStorage.getItem('admin_auth_token');
     if (token) {
       setIsAdminAuthenticated(true);
     }
@@ -106,6 +106,7 @@ const MainContent: React.FC = () => {
 
   const handleAdminLogout = () => {
     sessionStorage.removeItem('admin_auth_token');
+    localStorage.removeItem('admin_auth_token');
     setIsAdminAuthenticated(false);
     setIsAdminRoute(false);
     window.history.pushState({}, '', '/');

@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useCart } from '../contexts/CartContext';
+import { useStore } from '../contexts/StoreContext';
 import { formatCurrency } from '../utils/formatters';
 import { 
   X, 
@@ -9,7 +10,8 @@ import {
   ShoppingBag, 
   ArrowRight, 
   Truck, 
-  Store 
+  Store,
+  AlertCircle
 } from 'lucide-react';
 
 export const CartDrawer: React.FC = () => {
@@ -30,6 +32,8 @@ export const CartDrawer: React.FC = () => {
     isFreeDelivery,
     setIsCheckoutOpen
   } = useCart();
+
+  const { isOpen } = useStore();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -230,14 +234,26 @@ export const CartDrawer: React.FC = () => {
                 </div>
               </div>
 
+              {!isOpen && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Loja fechada no momento. Não estamos recebendo pedidos.</span>
+                </div>
+              )}
+
               <div className="space-y-2">
                 <button
                   type="button"
+                  disabled={!isOpen}
                   onClick={handleProceedToCheckout}
-                  className="w-full h-11 px-4 bg-[#69318A] hover:bg-[#572185] text-white font-medium text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                  className={`w-full h-11 px-4 font-medium text-xs sm:text-sm rounded-xl transition-all flex items-center justify-center gap-2 shadow-xs ${
+                    !isOpen 
+                      ? 'bg-gray-300 text-gray-600 cursor-not-allowed' 
+                      : 'bg-[#69318A] hover:bg-[#572185] text-white cursor-pointer'
+                  }`}
                 >
-                  <span>Continuar para entrega</span>
-                  <ArrowRight className="w-4 h-4 stroke-[1.8]" />
+                  <span>{!isOpen ? 'Loja fechada no momento' : 'Continuar para entrega'}</span>
+                  {isOpen && <ArrowRight className="w-4 h-4 stroke-[1.8]" />}
                 </button>
 
                 <button

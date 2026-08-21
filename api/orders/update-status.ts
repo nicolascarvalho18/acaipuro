@@ -1,4 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
+import {
+  updateOrderStatusDb,
+  listAllOrders,
+  getOrder
+} from '../_services/db';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUUID(str?: string): boolean {
@@ -74,36 +79,11 @@ function getSupabaseClient() {
   return null;
 }
 
-function getNotificationMessage(status: string, orderNumber: string, reason?: string, fulfillmentType: string = 'delivery'): string {
-  switch (status) {
-    case 'new':
-      return `Recebemos seu pedido #${orderNumber}. Em instantes vamos confirmar.`;
-    case 'confirmed':
-      return `Seu pedido #${orderNumber} foi confirmado e já entrou na fila de produção.`;
-    case 'preparing':
-      return `Seu pedido #${orderNumber} está sendo preparado.`;
-    case 'delivering':
-    case 'in_transit':
-      return `Seu pedido #${orderNumber} saiu para entrega. Em breve chegará ao endereço informado.`;
-    case 'ready_for_pickup':
-      return `Seu pedido #${orderNumber} está pronto para retirada no balcão.`;
-    case 'done':
-    case 'delivered':
-      return fulfillmentType === 'pickup'
-        ? `Seu pedido #${orderNumber} foi retirado. Obrigado pela preferência!`
-        : `Seu pedido #${orderNumber} foi entregue. Obrigado por escolher a Açaí Puro Sabor!`;
-    case 'cancelled':
-      return `Seu pedido #${orderNumber} foi cancelado. Motivo: ${reason || 'Cancelamento solicitado pela loja'}.`;
-    default:
-      return `Status do pedido #${orderNumber} atualizado para ${status}.`;
-  }
-}
-
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,OPTIONS');
-  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
@@ -116,12 +96,11 @@ export default async function handler(req: any, res: any) {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
 
-  // GET: Handlers para Consulta de Entregadores, Corridas e Localização
+  // GET: Handlers
   if (req.method === 'GET') {
     const type = req.query?.type;
 
-    // 1. Listar motoristas
-    if (type === 'drivers' || type === 'delivery_drivers' || !type) {
+    if (type === 'drivers' || type === 'delivery_drivers') {
       if (supabase) {
         try {
           const { data } = await supabase
@@ -135,7 +114,6 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true, drivers: memoryDrivers });
     }
 
-    // 2. Listar corridas
     if (type === 'assignments' || type === 'delivery_assignments' || type === 'assign') {
       const driverId = req.query?.driverId;
       const orderNum = req.query?.orderNumber;
@@ -157,7 +135,6 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true, assignments: filtered });
     }
 
-    // 3. Localização do motorista
     if (type === 'location' || type === 'driver_location') {
       const orderNum = req.query?.orderNumber;
       const driverId = req.query?.driverId;
@@ -203,7 +180,8 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true, location: null });
     }
 
-    return res.status(200).json({ success: true });
+    const orders = await listAllOrders({ includeArchived: true, includeDeleted: true });
+    return res.status(200).json({ success: true, orders });
   }
 
   try {
@@ -349,12 +327,14 @@ export default async function handler(req: any, res: any) {
           else q = q.eq('order_number', orderNumber);
           const { data } = await q.select('*, driver:delivery_drivers(*)').maybeSingle();
 
-          if (status === 'picked_up' || status === 'in_transit') {
-            await supabase.from('orders').update({ status: 'delivering', updated_at: now }).eq('order_number', orderNumber);
-          } else if (status === 'delivered') {
-            await supabase.from('orders').update({ status: 'done', completed_at: now, updated_at: now }).eq('order_number', orderNumber);
-            if (driverId) {
-              await supabase.from('delivery_drivers').update({ availability_status: 'available', updated_at: now }).eq('id', driverId);
+          if (orderNumber) {
+            if (status === 'picked_up' || status === 'in_transit') {
+              await updateOrderStatusDb(orderNumber, 'delivering', reason, 'driver');
+            } else if (status === 'delivered') {
+              await updateOrderStatusDb(orderNumber, 'done', reason, 'driver');
+              if (driverId) {
+                await supabase.from('delivery_drivers').update({ availability_status: 'available', updated_at: now }).eq('id', driverId);
+              }
             }
           }
           return res.status(200).json({ success: true, assignment: data });
@@ -391,121 +371,29 @@ export default async function handler(req: any, res: any) {
     }
 
     // Standard Order Status Update
-    const { orderId, status, reason, changedBy = 'admin' } = body || {};
+    const orderId = body?.orderId || body?.orderNumber;
+    const status = body?.status;
+    const reason = body?.reason;
+    const changedBy = body?.changedBy || 'admin';
 
     if (!orderId || !status) {
       return res.status(400).json({ error: 'Parâmetros orderId e status são obrigatórios.' });
     }
 
-    const isIdUuid = isUUID(orderId);
+    const updated = await updateOrderStatusDb(orderId, status, reason, changedBy);
 
-    if (supabase) {
-      try {
-        let selectQuery = supabase.from('orders').select('*');
-        if (isIdUuid) {
-          selectQuery = selectQuery.eq('id', orderId);
-        } else {
-          selectQuery = selectQuery.eq('order_number', orderId);
-        }
-
-        const { data: currentOrder, error: selectErr } = await selectQuery.maybeSingle();
-
-        if (selectErr) {
-          console.warn('[Supabase select error]:', selectErr);
-        }
-
-        const previousStatus = currentOrder?.status || 'new';
-        const fulfillmentType = currentOrder?.fulfillment_type || 'delivery';
-        const orderNumber = currentOrder?.order_number || orderId;
-        const actualOrderId = isUUID(currentOrder?.id) ? currentOrder.id : (isIdUuid ? orderId : null);
-
-        const updatePayload: any = {
-          status,
-          updated_at: now,
-        };
-
-        if (status === 'done') {
-          updatePayload.completed_at = now;
-        }
-
-        if (status === 'cancelled') {
-          updatePayload.cancellation_reason = reason || 'Cancelado pela loja';
-        }
-
-        let updateQuery = supabase.from('orders').update(updatePayload);
-        if (isIdUuid) {
-          updateQuery = updateQuery.eq('id', orderId);
-        } else {
-          updateQuery = updateQuery.eq('order_number', orderId);
-        }
-
-        const { data: updatedOrder, error: updateErr } = await updateQuery.select().maybeSingle();
-
-        if (updateErr) {
-          console.error('[Supabase update error]:', updateErr);
-        }
-
-        const notificationMessage = getNotificationMessage(status, orderNumber, reason, fulfillmentType);
-
-        try {
-          await supabase.from('order_status_history').insert({
-            order_id: actualOrderId,
-            order_number: orderNumber,
-            previous_status: previousStatus,
-            new_status: status,
-            changed_by: changedBy,
-            reason: reason || null,
-            created_at: now,
-          });
-        } catch (hErr) {
-          console.warn('[History insert error]:', hErr);
-        }
-
-        try {
-          await supabase.from('order_notifications').insert({
-            order_id: actualOrderId,
-            order_number: orderNumber,
-            status,
-            message: notificationMessage,
-            channel: 'app_timeline',
-            sent_at: now,
-          });
-        } catch (nErr) {
-          console.warn('[Notification insert error]:', nErr);
-        }
-
-        try {
-          await supabase.from('audit_logs').insert({
-            user_email: changedBy,
-            action: 'Atualização de Status do Pedido',
-            entity: 'orders',
-            entity_id: actualOrderId || orderNumber,
-            details: {
-              orderNumber,
-              from: previousStatus,
-              to: status,
-              reason: reason || null,
-            },
-          });
-        } catch (aErr) {
-          console.warn('[Audit insert error]:', aErr);
-        }
-
-        return res.status(200).json({
-          success: true,
-          order: updatedOrder || currentOrder || { id: orderId, order_number: orderNumber, status },
-          notificationMessage,
-        });
-      } catch (err) {
-        console.error('Supabase update status exception:', err);
-      }
+    if (updated) {
+      return res.status(200).json({
+        success: true,
+        order: updated,
+        notificationMessage: `Status do pedido #${updated.order_number} atualizado para ${updated.status}.`,
+      });
     }
 
-    const fallbackMessage = getNotificationMessage(status, orderId, reason);
     return res.status(200).json({
       success: true,
       order: { id: orderId, order_number: orderId, status },
-      notificationMessage: fallbackMessage,
+      notificationMessage: `Status do pedido #${orderId} atualizado para ${status}.`,
     });
   } catch (err: any) {
     return res.status(500).json({ error: 'Erro ao atualizar status', message: err?.message });

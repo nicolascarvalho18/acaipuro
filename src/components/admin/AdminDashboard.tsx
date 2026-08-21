@@ -54,11 +54,26 @@ import {
   Wallet,
   Calendar,
   AlertCircle,
-  Navigation
+  Navigation,
+  RotateCcw,
+  Loader2,
+  MapPin,
+  FileText
 } from 'lucide-react';
 import type { Product, CategoryInfo, AdditionalItem, ProductSize } from '../../types';
 import { AdminLiveDeliveries } from './AdminLiveDeliveries';
 import { createDeliveryOffer } from '../../services/deliveryService';
+import {
+  fetchAllOrders,
+  updateOrderStatus,
+  softDeleteOrder,
+  restoreOrder,
+  hardDeleteOrder,
+  toggleArchiveOrder,
+  saveOrderInternalNotes,
+  normalizeStatus,
+  Order as RealOrder
+} from '../../services/orderService';
 
 export interface OrderItem {
   productId?: string;
@@ -119,22 +134,14 @@ export interface AuditLog {
 }
 
 type TabType = 
-  | 'visao_geral'
+  | 'inicio'
   | 'pedidos'
-  | 'entregas_mapa'
-  | 'caixa'
-  | 'produtos'
-  | 'categorias'
-  | 'tamanhos'
-  | 'adicionais'
-  | 'promocoes'
-  | 'estoque'
-  | 'entregas'
+  | 'financeiro'
+  | 'cardapio'
   | 'clientes'
+  | 'entregadores'
   | 'relatorios'
-  | 'configuracoes'
-  | 'usuarios'
-  | 'auditoria';
+  | 'configuracoes';
 
 const STATUS_CONFIG: Record<RealOrder['status'], { label: string; bg: string; text: string; icon: React.ComponentType<any> }> = {
   new: { label: 'Novo Pedido', bg: 'bg-purple-100', text: 'text-[#69318A]', icon: ShoppingBag },
@@ -183,7 +190,27 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     refreshCatalog
   } = useStore();
 
-  const [activeTab, setActiveTab] = useState<TabType>('visao_geral');
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    if (typeof window === 'undefined') return 'pedidos';
+    const path = window.location.pathname.toLowerCase();
+    const search = window.location.search.toLowerCase();
+    if (path.includes('financeiro') || search.includes('tab=financeiro')) return 'financeiro';
+    if (path.includes('cardapio') || search.includes('tab=cardapio')) return 'cardapio';
+    if (path.includes('clientes') || search.includes('tab=clientes')) return 'clientes';
+    if (path.includes('entregadores') || search.includes('tab=entregadores')) return 'entregadores';
+    if (path.includes('relatorios') || search.includes('tab=relatorios')) return 'relatorios';
+    if (path.includes('configuracoes') || search.includes('tab=configuracoes')) return 'configuracoes';
+    if (path.includes('inicio') || search.includes('tab=inicio')) return 'inicio';
+    return 'pedidos';
+  });
+
+  const handleTabChange = (tab: TabType) => {
+    setActiveTab(tab);
+    try {
+      window.history.pushState({}, '', `/admin/${tab}`);
+    } catch {}
+  };
+
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [orders, setOrders] = useState<RealOrder[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -191,15 +218,48 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const [fulfillmentFilter, setFulfillmentFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [dateFilter, setDateFilter] = useState<string>('hoje'); // 'hoje' | 'ontem' | '7dias' | '30dias' | 'todos'
+
+  // Sub-abas do Cardápio
+  const [cardapioSubTab, setCardapioSubTab] = useState<'produtos' | 'categorias' | 'tamanhos' | 'adicionais' | 'combos' | 'estoque'>('produtos');
+
+  // Filtros de Período
+  const [dateFilter, setDateFilter] = useState<'hoje' | 'ontem' | '7dias' | '30dias' | 'personalizado'>('hoje');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
 
   // Modal de Cancelamento
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [cancellationReason, setCancellationReason] = useState('');
 
+  // Toast de Notificação
+  const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Estado de Atualização Ativa (prevenção de duplo clique / salvando)
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+
   // Observações Internas
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
   const [internalNoteText, setInternalNoteText] = useState('');
+
+  // Histórico de Compras do Cliente Selecionado
+  const [selectedCustomerHistory, setSelectedCustomerHistory] = useState<{
+    name: string;
+    phone: string;
+    address?: string;
+    orders: RealOrder[];
+  } | null>(null);
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [whatsappTokenInput, setWhatsappTokenInput] = useState('');
+  const [whatsappPhoneIdInput, setWhatsappPhoneIdInput] = useState('');
+
+  // Auto-dismiss do Toast
+  useEffect(() => {
+    if (toastMessage) {
+      const timer = setTimeout(() => setToastMessage(null), 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [toastMessage]);
 
   // Caixa Diário
   const [cashSession, setCashSession] = useState<any>(null);
@@ -224,7 +284,6 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
 
   const prevUnconfirmedCountRef = useRef<number>(0);
-  const recentUpdatesRef = useRef<Map<string, { status: RealOrder['status']; timestamp: number }>>(new Map());
 
   const logAudit = (action: string, entity: string, details: string) => {
     const newLog: AuditLog = {
@@ -263,29 +322,23 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     }
   }, [soundEnabled]);
 
-  // Carregar Pedidos da API
+  // Carregar Pedidos com fonte única
   const fetchOrders = useCallback(async () => {
     try {
-      const res = await fetch('/api/orders?includeArchived=true');
-      const data = await res.json();
-      if (data.success && Array.isArray(data.orders)) {
-        const now = Date.now();
-        // Mesclar respeitando atualizações recentes locais
-        const mergedOrders = data.orders.map((fetched: RealOrder) => {
-          const recent = recentUpdatesRef.current.get(fetched.id || '') || recentUpdatesRef.current.get(fetched.order_number);
-          if (recent && (now - recent.timestamp) < 8000) {
-            return { ...fetched, status: recent.status };
-          }
-          return fetched;
-        });
+      const fetchedOrders = await fetchAllOrders(true, false);
+      if (Array.isArray(fetchedOrders)) {
+        const normalizedOrders = fetchedOrders.map((o: RealOrder) => ({
+          ...o,
+          status: normalizeStatus(o.status),
+        }));
 
-        const newCount = mergedOrders.filter((o: RealOrder) => o.status === 'new' && !o.is_archived && !o.deleted_at).length;
+        const newCount = normalizedOrders.filter((o: RealOrder) => o.status === 'new' && !o.is_archived && !o.deleted_at).length;
         
         if (newCount > prevUnconfirmedCountRef.current && prevUnconfirmedCountRef.current !== 0) {
           playAlertSound();
         }
         prevUnconfirmedCountRef.current = newCount;
-        setOrders(mergedOrders);
+        setOrders(normalizedOrders);
 
         if (newCount > 0) {
           document.title = `(${newCount}) 🔔 Novo Pedido! - Açaí Puro Sabor`;
@@ -314,11 +367,37 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     } catch {}
   }, []);
 
-  // Supabase Realtime Subscription + Polling
+  // Supabase Realtime Subscription + Storage Events + Fast Polling
   useEffect(() => {
     setIsLoading(true);
     fetchOrders();
     fetchCashRegister();
+
+    // Ouvir novos pedidos despachados pelo checkout no mesmo navegador
+    const handleNewOrderLocal = (e: any) => {
+      const order = e.detail;
+      if (order) {
+        setOrders(prev => {
+          if (prev.some(o => o.id === order.id || o.order_number === order.order_number)) {
+            return prev.map(o => (o.id === order.id || o.order_number === order.order_number) ? order : o);
+          }
+          return [order, ...prev];
+        });
+        playAlertSound();
+        setToastMessage({ text: `🔔 Novo Pedido #${order.order_number} recebido!`, type: 'success' });
+        logAudit('Novo Pedido Recebido', 'Pedidos', `Pedido #${order.order_number} (${formatCurrency(order.total)})`);
+      }
+      fetchOrders();
+    };
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'acai_order_ping' || e.key === 'acai_last_order_created') {
+        fetchOrders();
+      }
+    };
+
+    window.addEventListener('acai_order_created', handleNewOrderLocal);
+    window.addEventListener('storage', handleStorageChange);
 
     let channel: any = null;
     if (supabase) {
@@ -331,12 +410,37 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
             (payload) => {
               if (payload.eventType === 'INSERT') {
                 const newOrder = payload.new as RealOrder;
-                setOrders(prev => [newOrder, ...prev.filter(o => o.id !== newOrder.id && o.order_number !== newOrder.order_number)]);
-                playAlertSound();
-                logAudit('Novo Pedido Recebido', 'Pedidos', `Pedido #${newOrder.order_number} (${formatCurrency(newOrder.total)})`);
+                if (!newOrder.deleted_at) {
+                  setOrders(prev => {
+                    if (prev.some(o => o.id === newOrder.id || o.order_number === newOrder.order_number)) {
+                      return prev.map(o => (o.id === newOrder.id || o.order_number === newOrder.order_number) ? newOrder : o);
+                    }
+                    return [newOrder, ...prev];
+                  });
+                  playAlertSound();
+                  setToastMessage({ text: `🔔 Novo Pedido #${newOrder.order_number} recebido!`, type: 'success' });
+                  logAudit('Novo Pedido Recebido', 'Pedidos', `Pedido #${newOrder.order_number} (${formatCurrency(newOrder.total)})`);
+                }
               } else if (payload.eventType === 'UPDATE') {
                 const updated = payload.new as RealOrder;
-                setOrders(prev => prev.map(o => (o.id === updated.id || o.order_number === updated.order_number) ? updated : o));
+                if (updated.deleted_at) {
+                  setOrders(prev => prev.filter(o => o.id !== updated.id && o.order_number !== updated.order_number));
+                } else {
+                  setOrders(prev => prev.map(o => {
+                    if (o.id === updated.id || o.order_number === updated.order_number) {
+                      if (o.updated_at && updated.updated_at && new Date(updated.updated_at).getTime() < new Date(o.updated_at).getTime()) {
+                        return o;
+                      }
+                      return updated;
+                    }
+                    return o;
+                  }));
+                }
+              } else if (payload.eventType === 'DELETE') {
+                const deletedId = (payload.old as any)?.id;
+                if (deletedId) {
+                  setOrders(prev => prev.filter(o => o.id !== deletedId));
+                }
               }
             }
           )
@@ -350,87 +454,69 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
 
     return () => {
       clearInterval(interval);
+      window.removeEventListener('acai_order_created', handleNewOrderLocal);
+      window.removeEventListener('storage', handleStorageChange);
       if (channel && supabase) {
         supabase.removeChannel(channel);
       }
     };
   }, [fetchOrders, fetchCashRegister, playAlertSound]);
 
-  // Atualizar Status do Pedido com sincronização total
+  // Atualizar Status do Pedido com persistência real
   const handleUpdateStatus = async (orderId: string, newStatus: RealOrder['status'], reason?: string) => {
     try {
-      // 1. Gravar no registro recente para evitar rollback de polling
-      recentUpdatesRef.current.set(orderId, { status: newStatus, timestamp: Date.now() });
-
-      // 2. Atualizar estado otimista no React
-      setOrders(prev => prev.map(o => (o.id === orderId || o.order_number === orderId) ? { ...o, status: newStatus, cancellation_reason: reason } : o));
-      logAudit('Status Alterado', 'Pedidos', `Pedido #${orderId} alterado para ${newStatus}`);
-
-      // 3. Atualizar diretamente no Supabase pelo frontend se disponível
-      if (supabase) {
-        try {
-          const isIdUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId);
-          const updatePayload: any = {
-            status: newStatus,
-            updated_at: new Date().toISOString(),
-          };
-          if (newStatus === 'done') updatePayload.completed_at = new Date().toISOString();
-          if (newStatus === 'cancelled') updatePayload.cancellation_reason = reason || 'Cancelado pela loja';
-
-          let q = supabase.from('orders').update(updatePayload);
-          if (isIdUuid) {
-            q = q.eq('id', orderId);
-          } else {
-            q = q.eq('order_number', orderId);
-          }
-          await q;
-        } catch (supaErr) {
-          console.warn('[Direct Supabase update warn]:', supaErr);
-        }
+      setUpdatingOrderId(orderId);
+      const result = await updateOrderStatus(orderId, newStatus, reason);
+      if (result.success && result.order) {
+        setOrders(prev => prev.map(o => (o.id === orderId || o.order_number === orderId) ? (result.order as RealOrder) : o));
+        const statusLabel = STATUS_CONFIG[newStatus]?.label || newStatus;
+        setToastMessage({ text: `Pedido #${orderId} atualizado para "${statusLabel}" com sucesso!`, type: 'success' });
+        logAudit('Status Alterado', 'Pedidos', `Pedido #${orderId} alterado para ${newStatus}`);
+      } else {
+        alert(result.error || 'Erro ao persistir status do pedido no banco de dados.');
+        fetchOrders();
       }
-
-      // 4. Chamar endpoint do backend para histórico e notificações
-      await fetch('/api/orders/update-status', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, status: newStatus, reason }),
-      });
-    } catch (e) {
+    } catch (e: any) {
       console.error('Update status error:', e);
+      alert('Erro ao atualizar status: ' + (e?.message || e));
+      fetchOrders();
+    } finally {
+      setUpdatingOrderId(null);
     }
   };
 
   // Arquivar / Desarquivar Pedido
   const handleToggleArchive = async (orderId: string, isArchived: boolean) => {
     try {
-      const action = isArchived ? 'unarchive' : 'archive';
       setOrders(prev => prev.map(o => (o.id === orderId || o.order_number === orderId) ? { ...o, is_archived: !isArchived } : o));
       logAudit(isArchived ? 'Pedido Desarquivado' : 'Pedido Arquivado', 'Pedidos', `Pedido #${orderId}`);
-
-      await fetch('/api/orders/manage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, action }),
-      });
+      await toggleArchiveOrder(orderId, isArchived);
     } catch (e) {
       console.error('Archive error:', e);
+      fetchOrders();
     }
   };
 
-  // Excluir Logicamente Pedido
+  // Excluir Definitivamente Pedido (Hard Delete com confirmação)
   const handleDeleteOrder = async (orderId: string) => {
-    if (!confirm('Deseja realmente excluir logicamente este pedido? O registro será mantido na auditoria.')) return;
+    if (!confirm(`Deseja realmente excluir o pedido #${orderId} DEFINITIVAMENTE do banco de dados? Esta ação não pode ser desfeita.`)) return;
     try {
-      setOrders(prev => prev.filter(o => o.id !== orderId && o.order_number !== orderId));
-      logAudit('Exclusão Lógica', 'Pedidos', `Pedido #${orderId} excluído`);
-
-      await fetch('/api/orders/manage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, action: 'delete' }),
-      });
-    } catch (e) {
-      console.error('Delete order error:', e);
+      setUpdatingOrderId(orderId);
+      const result = await hardDeleteOrder(orderId);
+      if (result.success) {
+        setOrders(prev => prev.filter(o => o.id !== orderId && o.order_number !== orderId));
+        setToastMessage({ text: `Pedido #${orderId} excluído definitivamente com sucesso!`, type: 'success' });
+        logAudit('Exclusão Permanente', 'Pedidos', `Pedido #${orderId} excluído definitivamente`);
+      } else {
+        alert(result.error || 'Erro ao excluir pedido do banco de dados.');
+        fetchOrders();
+      }
+    } catch (e: any) {
+      console.error('Hard delete order error:', e);
+      alert('Erro ao excluir pedido: ' + (e?.message || e));
+      fetchOrders();
+    } finally {
+      setUpdatingOrderId(null);
     }
   };
 
@@ -439,14 +525,67 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     try {
       setOrders(prev => prev.map(o => (o.id === orderId || o.order_number === orderId) ? { ...o, internal_notes: notes } : o));
       setEditingNotesId(null);
-      await fetch('/api/orders/manage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId, action: 'update_notes', notes }),
-      });
-    } catch (e) {
-      console.error('Save notes error:', e);
+      await saveOrderInternalNotes(orderId, notes);
+      setToastMessage({ text: 'Nota interna salva!', type: 'success' });
+    } catch {
+      alert('Erro ao salvar observação interna');
     }
+  };
+
+  const handleSaveNotes = async (orderId: string) => {
+    await handleSaveInternalNotes(orderId, internalNoteText.trim());
+  };
+
+  // Imprimir Comanda Térmica (80mm)
+  const printThermalReceipt = (order: RealOrder) => {
+    const printWindow = window.open('', '_blank', 'width=350,height=600');
+    if (!printWindow) return;
+    const itemsHtml = (order.items || []).map(it => `
+      <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-size:12px;">
+        <span>${it.quantity}x ${it.name} ${it.size ? `(${it.size})` : ''}</span>
+        <span>R$ ${(it.totalPrice || it.unitPrice * it.quantity).toFixed(2).replace('.', ',')}</span>
+      </div>
+      ${it.additionals && it.additionals.length ? `<div style="font-size:10px; color:#555; margin-left:10px;">+ ${it.additionals.join(', ')}</div>` : ''}
+      ${it.notes ? `<div style="font-size:10px; color:#c00; margin-left:10px;">Obs: ${it.notes}</div>` : ''}
+    `).join('');
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Comanda #${order.order_number}</title>
+          <style>
+            body { font-family: monospace; padding: 10px; width: 280px; margin: 0 auto; }
+            .center { text-align: center; }
+            .divider { border-top: 1px dashed #000; margin: 8px 0; }
+            h2 { margin: 4px 0; }
+          </style>
+        </head>
+        <body onload="window.print(); window.close();">
+          <div class="center">
+            <h2>AÇAÍ PURO SABOR</h2>
+            <div>Pedido #${order.order_number}</div>
+            <div style="font-size:11px;">${new Date(order.created_at).toLocaleString('pt-BR')}</div>
+            <div style="font-weight:bold; margin-top:4px;">${order.fulfillment_type === 'pickup' ? '*** RETIRADA NO BALCÃO ***' : '*** ENTREGA DELIVERY ***'}</div>
+          </div>
+          <div class="divider"></div>
+          <div><strong>Cliente:</strong> ${order.customer_name}</div>
+          <div><strong>Tel:</strong> ${order.customer_phone || 'Não informado'}</div>
+          ${order.fulfillment_type === 'delivery' ? `<div><strong>End:</strong> ${order.street || ''}, ${order.number || 'S/N'} - ${order.neighborhood || ''}</div>` : ''}
+          <div class="divider"></div>
+          <div><strong>ITENS:</strong></div>
+          ${itemsHtml}
+          <div class="divider"></div>
+          <div style="display:flex; justify-content:space-between;"><span>Subtotal:</span><span>R$ ${Number(order.subtotal || 0).toFixed(2).replace('.', ',')}</span></div>
+          <div style="display:flex; justify-content:space-between;"><span>Taxa Entrega:</span><span>R$ ${Number(order.delivery_fee || 0).toFixed(2).replace('.', ',')}</span></div>
+          <div style="display:flex; justify-content:space-between; font-weight:bold; font-size:14px; margin-top:4px;"><span>TOTAL:</span><span>R$ ${Number(order.total || 0).toFixed(2).replace('.', ',')}</span></div>
+          <div style="font-size:11px; margin-top:4px;"><strong>Pagamento:</strong> ${(order.payment_method || '').toUpperCase()}</div>
+          ${order.notes ? `<div class="divider"></div><div><strong>OBS GERAL:</strong> ${order.notes}</div>` : ''}
+          <div class="divider"></div>
+          <div class="center" style="font-size:10px;">Obrigado pela preferência!</div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
   // Ações de Caixa
@@ -572,95 +711,193 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     }, 300);
   };
 
-  // CÁLCULOS FINANCEIROS EXATOS COM FUSO HORÁRIO AMERICA/SAO_PAULO
+  // DATAS DE REFERÊNCIA EM SÃO PAULO
   const todaySP = useMemo(() => getSaoPauloDate(), []);
-  
+  const yesterdaySP = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return getSaoPauloDate(d);
+  }, []);
+
+  // PEDIDOS FILTRADOS PELO PERÍODO ESCOLHIDO
+  const filteredByDateOrders = useMemo(() => {
+    return orders.filter(o => {
+      if (o.deleted_at) return false;
+      const orderDateSP = getSaoPauloDate(o.created_at);
+
+      if (dateFilter === 'hoje') {
+        return orderDateSP === todaySP;
+      }
+      if (dateFilter === 'ontem') {
+        return orderDateSP === yesterdaySP;
+      }
+      if (dateFilter === '7dias') {
+        const d7 = new Date();
+        d7.setDate(d7.getDate() - 7);
+        return new Date(o.created_at).getTime() >= d7.getTime();
+      }
+      if (dateFilter === '30dias') {
+        const d30 = new Date();
+        d30.setDate(d30.getDate() - 30);
+        return new Date(o.created_at).getTime() >= d30.getTime();
+      }
+      if (dateFilter === 'personalizado') {
+        if (customStartDate && orderDateSP < customStartDate) return false;
+        if (customEndDate && orderDateSP > customEndDate) return false;
+        return true;
+      }
+      return true;
+    });
+  }, [orders, dateFilter, todaySP, yesterdaySP, customStartDate, customEndDate]);
+
+  // CÁLCULOS FINANCEIROS EM TEMPO REAL
+  // Pedidos de hoje
   const todayOrders = useMemo(() => {
     return orders.filter(o => !o.deleted_at && getSaoPauloDate(o.created_at) === todaySP);
   }, [orders, todaySP]);
 
-  // Faturamento Realizado Hoje: apenas pedidos 'done' (entregues/retirados)
-  const faturamentoRealizadoHoje = useMemo(() => {
+  // Faturamento Hoje (concluídos apenas) - Inicia em R$ 0,00 a cada novo dia!
+  const faturamentoHoje = useMemo(() => {
     return todayOrders
-      .filter(o => o.status === 'done')
+      .filter(o => o.status === 'done' || o.status === 'completed')
       .reduce((sum, o) => sum + Number(o.total || 0), 0);
   }, [todayOrders]);
 
-  // Valor Previsto Hoje: pedidos em andamento
-  const valorPrevistoHoje = useMemo(() => {
-    return todayOrders
-      .filter(o => ['new', 'confirmed', 'preparing', 'delivering', 'ready_for_pickup'].includes(o.status))
+  // Faturamento da Semana (últimos 7 dias)
+  const faturamentoSemana = useMemo(() => {
+    const d7 = new Date();
+    d7.setDate(d7.getDate() - 7);
+    return orders
+      .filter(o => !o.deleted_at && (o.status === 'done' || o.status === 'completed') && new Date(o.created_at).getTime() >= d7.getTime())
       .reduce((sum, o) => sum + Number(o.total || 0), 0);
-  }, [todayOrders]);
-
-  const pedidosConcluidosHoje = useMemo(() => {
-    return todayOrders.filter(o => o.status === 'done').length;
-  }, [todayOrders]);
-
-  const pedidosCanceladosHoje = useMemo(() => {
-    return todayOrders.filter(o => o.status === 'cancelled').length;
-  }, [todayOrders]);
-
-  const ticketMedioHoje = useMemo(() => {
-    return pedidosConcluidosHoje > 0 ? faturamentoRealizadoHoje / pedidosConcluidosHoje : 0;
-  }, [faturamentoRealizadoHoje, pedidosConcluidosHoje]);
-
-  // Pagamentos de hoje
-  const paymentBreakdownHoje = useMemo(() => {
-    const doneToday = todayOrders.filter(o => o.status === 'done');
-    const pix = doneToday.filter(o => o.payment_method === 'pix').reduce((s, o) => s + Number(o.total || 0), 0);
-    const card = doneToday.filter(o => o.payment_method === 'card_online').reduce((s, o) => s + Number(o.total || 0), 0);
-    const delivery = doneToday.filter(o => o.payment_method === 'delivery').reduce((s, o) => s + Number(o.total || 0), 0);
-    return { pix, card, delivery };
-  }, [todayOrders]);
-
-  // Contadores gerais da visualização ativa
-  const activeOperationalOrders = useMemo(() => {
-    return orders.filter(o => !o.deleted_at && !o.is_archived);
   }, [orders]);
 
-  const countNew = activeOperationalOrders.filter(o => o.status === 'new').length;
-  const countPreparing = activeOperationalOrders.filter(o => o.status === 'preparing' || o.status === 'confirmed').length;
-  const countDelivering = activeOperationalOrders.filter(o => o.status === 'delivering' || o.status === 'ready_for_pickup').length;
-  const countDone = activeOperationalOrders.filter(o => o.status === 'done').length;
+  // Faturamento do Mês Atual
+  const faturamentoMes = useMemo(() => {
+    const currentMonthPrefix = todaySP.substring(0, 7);
+    return orders
+      .filter(o => !o.deleted_at && (o.status === 'done' || o.status === 'completed') && getSaoPauloDate(o.created_at).startsWith(currentMonthPrefix))
+      .reduce((sum, o) => sum + Number(o.total || 0), 0);
+  }, [orders, todaySP]);
 
-  // Produto mais vendido
-  const topProduct = useMemo(() => {
-    const counts: Record<string, number> = {};
-    orders.filter(o => o.status === 'done').forEach(o => {
+  // Métricas do Período Selecionado
+  const pedidosRecebidosPeriodo = filteredByDateOrders.length;
+  const pedidosEmPreparoPeriodo = filteredByDateOrders.filter(o => o.status === 'preparing' || o.status === 'confirmed').length;
+  const pedidosEntreguesPeriodo = filteredByDateOrders.filter(o => o.status === 'done' || o.status === 'completed').length;
+  const pedidosCanceladosPeriodo = filteredByDateOrders.filter(o => o.status === 'cancelled').length;
+
+  const faturamentoConcluidoPeriodo = useMemo(() => {
+    return filteredByDateOrders
+      .filter(o => o.status === 'done' || o.status === 'completed')
+      .reduce((sum, o) => sum + Number(o.total || 0), 0);
+  }, [filteredByDateOrders]);
+
+  const ticketMedioPeriodo = pedidosEntreguesPeriodo > 0 
+    ? faturamentoConcluidoPeriodo / pedidosEntreguesPeriodo 
+    : 0;
+
+  // Detalhamento de Pagamentos do Período
+  const pagamentosPeriodo = useMemo(() => {
+    const doneOrders = filteredByDateOrders.filter(o => o.status === 'done' || o.status === 'completed');
+    const pix = doneOrders.filter(o => o.payment_method === 'pix').reduce((s, o) => s + Number(o.total || 0), 0);
+    const card = doneOrders.filter(o => o.payment_method === 'card_online').reduce((s, o) => s + Number(o.total || 0), 0);
+    const delivery = doneOrders.filter(o => o.payment_method === 'delivery').reduce((s, o) => s + Number(o.total || 0), 0);
+    const deliveryFees = doneOrders.reduce((s, o) => s + Number(o.delivery_fee || 0), 0);
+    return { pix, card, delivery, deliveryFees };
+  }, [filteredByDateOrders]);
+
+  // Contadores operacionais das abas de Pedidos
+  const activeOperationalOrders = useMemo(() => {
+    return orders.filter(o => !o.deleted_at && !o.is_archived && !['cancelled', 'done', 'completed'].includes(o.status));
+  }, [orders]);
+
+  const countNew = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'new').length;
+  const countPreparing = orders.filter(o => !o.deleted_at && !o.is_archived && (o.status === 'preparing' || o.status === 'confirmed')).length;
+  const countDelivering = orders.filter(o => !o.deleted_at && !o.is_archived && (o.status === 'delivering' || o.status === 'out_for_delivery')).length;
+  const countReadyPickup = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'ready_for_pickup').length;
+  const countDone = orders.filter(o => !o.deleted_at && (o.status === 'done' || o.status === 'completed')).length;
+  const countCancelled = orders.filter(o => !o.deleted_at && o.status === 'cancelled').length;
+  const countArchived = orders.filter(o => !o.deleted_at && o.is_archived).length;
+
+  // Produtos mais vendidos no período
+  const topProdutosPeriodo = useMemo(() => {
+    const map: Record<string, { name: string; quantity: number; total: number }> = {};
+    filteredByDateOrders.filter(o => o.status === 'done' || o.status === 'completed').forEach(o => {
       (o.items || []).forEach(it => {
-        counts[it.name] = (counts[it.name] || 0) + it.quantity;
+        if (!map[it.name]) {
+          map[it.name] = { name: it.name, quantity: 0, total: 0 };
+        }
+        map[it.name].quantity += it.quantity;
+        map[it.name].total += (it.totalPrice || it.unitPrice || 0);
       });
     });
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    return sorted.length > 0 ? `${sorted[0][0]} (${sorted[0][1]}x)` : 'Açaí tradicional';
-  }, [orders]);
+    return Object.values(map).sort((a, b) => b.quantity - a.quantity).slice(0, 8);
+  }, [filteredByDateOrders]);
 
-  // Clientes Únicos
+  // Horários de Pico
+  const horariosPico = useMemo(() => {
+    const faixas = [
+      { label: '11h às 14h (Almoço)', count: 0 },
+      { label: '14h às 17h (Tarde)', count: 0 },
+      { label: '17h às 20h (Entardecer)', count: 0 },
+      { label: '20h às 23h (Pico Noturno)', count: 0 },
+      { label: '23h às 02h (Madrugada)', count: 0 },
+    ];
+    filteredByDateOrders.forEach(o => {
+      const h = new Date(o.created_at).getHours();
+      if (h >= 11 && h < 14) faixas[0].count += 1;
+      else if (h >= 14 && h < 17) faixas[1].count += 1;
+      else if (h >= 17 && h < 20) faixas[2].count += 1;
+      else if (h >= 20 && h < 23) faixas[3].count += 1;
+      else if (h >= 23 || h < 2) faixas[4].count += 1;
+    });
+    const maxCount = Math.max(...faixas.map(f => f.count), 1);
+    return faixas.map(f => ({ ...f, percent: Math.round((f.count / maxCount) * 100) }));
+  }, [filteredByDateOrders]);
+
+  // Base de Clientes Únicos com Histórico
   const customersList = useMemo(() => {
-    const map = new Map<string, { name: string; phone: string; count: number; totalSpent: number; lastOrder: string }>();
-    orders.forEach(o => {
-      const key = o.customer_phone || o.customer_name;
+    const map = new Map<string, { name: string; phone: string; address?: string; count: number; totalSpent: number; lastOrder: string; orders: RealOrder[] }>();
+    orders.filter(o => !o.deleted_at).forEach(o => {
+      const key = (o.customer_phone ? o.customer_phone.replace(/\D/g, '') : '') || o.customer_name.toLowerCase().trim();
       if (!map.has(key)) {
         map.set(key, {
           name: o.customer_name,
           phone: o.customer_phone || 'Não informado',
+          address: o.street ? `${o.street}, Nº ${o.number || 'S/N'} - ${o.neighborhood}` : 'Retirada no balcão',
           count: 0,
           totalSpent: 0,
           lastOrder: o.created_at,
+          orders: [],
         });
       }
       const c = map.get(key)!;
       c.count += 1;
-      if (o.status === 'done') c.totalSpent += Number(o.total || 0);
+      c.orders.push(o);
+      if (o.status === 'done' || o.status === 'completed') {
+        c.totalSpent += Number(o.total || 0);
+      }
+      if (new Date(o.created_at).getTime() > new Date(c.lastOrder).getTime()) {
+        c.lastOrder = o.created_at;
+      }
     });
-    return Array.from(map.values());
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
   }, [orders]);
+
+  const filteredCustomers = useMemo(() => {
+    if (!customerSearchQuery.trim()) return customersList;
+    const q = customerSearchQuery.toLowerCase().trim();
+    return customersList.filter(c => 
+      c.name.toLowerCase().includes(q) || 
+      c.phone.includes(q) || 
+      (c.address && c.address.toLowerCase().includes(q))
+    );
+  }, [customersList, customerSearchQuery]);
 
   // Exportar Relatório CSV
   const handleExportCSV = () => {
     const headers = ['Pedido', 'Data (SP)', 'Cliente', 'Telefone', 'Tipo', 'Subtotal', 'Frete', 'Total', 'Pagamento', 'Status', 'Cancelamento'];
-    const rows = orders.map(o => [
+    const rows = filteredByDateOrders.map(o => [
       o.order_number,
       new Date(o.created_at).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
       `"${o.customer_name}"`,
@@ -677,30 +914,23 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `relatorio_vendas_${getSaoPauloDate()}.csv`);
+    link.setAttribute('download', `relatorio_acai_puro_${dateFilter}_${getSaoPauloDate()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    logAudit('Exportação CSV', 'Relatórios', 'Relatório completo de pedidos exportado');
+    logAudit('Exportação CSV', 'Relatórios', `Relatório exportado para período ${dateFilter}`);
+    setToastMessage({ text: 'Relatório CSV exportado com sucesso!', type: 'success' });
   };
 
   const menuItems = [
-    { id: 'visao_geral', label: 'Visão Geral', icon: LayoutDashboard },
-    { id: 'pedidos', label: 'Pedidos em Tempo Real', icon: ShoppingBag, badge: countNew },
-    { id: 'entregas_mapa', label: 'Entregas no Mapa (GPS)', icon: Navigation },
-    { id: 'caixa', label: 'Caixa & Fechamento', icon: Wallet },
-    { id: 'produtos', label: 'Cardápio / Produtos', icon: Layers },
-    { id: 'categorias', label: 'Categorias', icon: Sparkles },
-    { id: 'tamanhos', label: 'Tamanhos & Preços', icon: Maximize2 },
-    { id: 'adicionais', label: 'Adicionais & Toppings', icon: PlusCircle },
-    { id: 'promocoes', label: 'Promoções & Cupons', icon: Tag },
-    { id: 'estoque', label: 'Estoque & Operação', icon: Boxes },
-    { id: 'entregas', label: 'Entregas & Bairros', icon: Truck },
-    { id: 'clientes', label: 'Base de Clientes', icon: Users },
-    { id: 'relatorios', label: 'Relatórios & Vendas', icon: BarChart3 },
-    { id: 'configuracoes', label: 'Configurações da Loja', icon: Sliders },
-    { id: 'usuarios', label: 'Usuários & Permissões', icon: ShieldCheck },
-    { id: 'auditoria', label: 'Histórico de Alterações', icon: History },
+    { id: 'inicio', label: 'Início', icon: LayoutDashboard },
+    { id: 'pedidos', label: 'Pedidos', icon: ShoppingBag, badge: countNew },
+    { id: 'financeiro', label: 'Financeiro', icon: Wallet },
+    { id: 'cardapio', label: 'Cardápio', icon: Layers },
+    { id: 'clientes', label: 'Clientes', icon: Users },
+    { id: 'entregadores', label: 'Entregadores', icon: Navigation },
+    { id: 'relatorios', label: 'Relatórios', icon: BarChart3 },
+    { id: 'configuracoes', label: 'Configurações', icon: Sliders },
   ];
 
   return (
@@ -726,7 +956,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               return (
                 <button
                   key={item.id}
-                  onClick={() => setActiveTab(item.id as TabType)}
+                  onClick={() => handleTabChange(item.id as TabType)}
                   className={`w-full px-3 py-2 rounded-xl text-xs font-semibold transition-all flex items-center justify-between cursor-pointer ${
                     isActive 
                       ? 'bg-[#803FA0] text-white shadow-xs' 
@@ -817,7 +1047,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                     <button
                       key={item.id}
                       onClick={() => {
-                        setActiveTab(item.id as TabType);
+                        handleTabChange(item.id as TabType);
                         setIsMobileMenuOpen(false);
                       }}
                       className={`w-full px-3 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-between ${
@@ -892,155 +1122,243 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         </header>
 
-        {/* 1. VISÃO GERAL */}
-        {activeTab === 'visao_geral' && (
+        {/* 1. INÍCIO — PAINEL OPERACIONAL */}
+        {activeTab === 'inicio' && (
           <div className="p-4 sm:p-8 space-y-6">
+            
+            {/* Barra de Filtros de Período */}
+            <div className="bg-white p-4 rounded-2xl border border-[#ECE8F0] shadow-xs flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-[#69318A]" />
+                <span className="text-xs font-bold text-[#28242A]">Período de Análise:</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                {[
+                  { id: 'hoje', label: 'Hoje' },
+                  { id: 'ontem', label: 'Ontem' },
+                  { id: '7dias', label: 'Últimos 7 dias' },
+                  { id: '30dias', label: 'Últimos 30 dias' },
+                  { id: 'personalizado', label: 'Personalizado' },
+                ].map(p => (
+                  <button
+                    key={p.id}
+                    onClick={() => setDateFilter(p.id as any)}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer ${
+                      dateFilter === p.id 
+                        ? 'bg-[#69318A] text-white shadow-xs' 
+                        : 'bg-[#FCFAF7] text-[#726C74] hover:bg-[#F3EDF6] border border-[#ECE8F0]'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {dateFilter === 'personalizado' && (
+                <div className="w-full flex flex-wrap items-center gap-2 pt-2 border-t border-[#ECE8F0] text-xs">
+                  <span className="text-[#726C74]">De:</span>
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={e => setCustomStartDate(e.target.value)}
+                    className="p-1.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-lg text-xs"
+                  />
+                  <span className="text-[#726C74]">Até:</span>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={e => setCustomEndDate(e.target.value)}
+                    className="p-1.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-lg text-xs"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Grid de KPIs Principais em Tempo Real */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               
-              {/* Faturamento Realizado Hoje */}
+              {/* Vendas de Hoje (Entregues) - Inicia em R$ 0,00 a cada novo dia */}
               <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
                 <div className="flex justify-between items-center text-[#726C74] text-xs font-bold uppercase">
-                  <span>Faturamento Hoje (Entregue)</span>
+                  <span>Vendas de Hoje</span>
                   <DollarSign className="w-4 h-4 text-emerald-600" />
                 </div>
                 <span className="text-2xl font-black text-[#49245B] font-['DM_Sans'] block">
-                  {formatCurrency(faturamentoRealizadoHoje)}
+                  {formatCurrency(faturamentoHoje)}
                 </span>
-                <span className="text-[11px] text-emerald-600 font-medium">✓ {pedidosConcluidosHoje} pedidos concluídos hoje</span>
+                <span className="text-[11px] text-emerald-600 font-medium">
+                  ✓ {todayOrders.filter(o => o.status === 'done').length} pedidos concluídos hoje
+                </span>
               </div>
 
-              {/* Valor Previsto / Em Andamento */}
+              {/* Pedidos Recebidos no Período */}
               <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
                 <div className="flex justify-between items-center text-[#726C74] text-xs font-bold uppercase">
-                  <span>Previsto (Em Produção)</span>
-                  <TrendingUp className="w-4 h-4 text-amber-600" />
+                  <span>Pedidos Recebidos</span>
+                  <ShoppingBag className="w-4 h-4 text-[#69318A]" />
+                </div>
+                <span className="text-2xl font-black text-[#28242A] font-['DM_Sans'] block">
+                  {pedidosRecebidosPeriodo}
+                </span>
+                <span className="text-[11px] text-[#726C74]">No período ({dateFilter})</span>
+              </div>
+
+              {/* Pedidos em Preparo */}
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
+                <div className="flex justify-between items-center text-[#726C74] text-xs font-bold uppercase">
+                  <span>Em Produção</span>
+                  <ChefHat className="w-4 h-4 text-amber-600" />
                 </div>
                 <span className="text-2xl font-black text-amber-600 font-['DM_Sans'] block">
-                  {formatCurrency(valorPrevistoHoje)}
+                  {pedidosEmPreparoPeriodo}
                 </span>
-                <span className="text-[11px] text-[#726C74]">Pedidos em preparo/entrega</span>
+                <span className="text-[11px] text-[#726C74]">Na cozinha / montagem</span>
               </div>
 
-              {/* Novos / Pendentes */}
+              {/* Pedidos Cancelados */}
               <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
                 <div className="flex justify-between items-center text-[#726C74] text-xs font-bold uppercase">
-                  <span>Novos Pedidos</span>
-                  <ShoppingBag className="w-4 h-4 text-red-500" />
+                  <span>Cancelados</span>
+                  <XCircle className="w-4 h-4 text-red-500" />
                 </div>
-                <span className={`text-2xl font-black font-['DM_Sans'] block ${countNew > 0 ? 'text-red-500 animate-pulse' : 'text-[#28242A]'}`}>
-                  {countNew}
+                <span className="text-2xl font-black text-red-500 font-['DM_Sans'] block">
+                  {pedidosCanceladosPeriodo}
                 </span>
-                <span className="text-[11px] text-[#726C74]">Aguardando confirmação</span>
+                <span className="text-[11px] text-red-600 font-medium">Não somados nas vendas</span>
               </div>
+            </div>
 
+            {/* Segunda Linha de Indicadores */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              
               {/* Ticket Médio */}
               <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
                 <div className="flex justify-between items-center text-[#726C74] text-xs font-bold uppercase">
-                  <span>Ticket Médio Hoje</span>
-                  <DollarSign className="w-4 h-4 text-[#69318A]" />
+                  <span>Ticket Médio</span>
+                  <TrendingUp className="w-4 h-4 text-[#69318A]" />
                 </div>
                 <span className="text-2xl font-black text-[#28242A] font-['DM_Sans'] block">
-                  {formatCurrency(ticketMedioHoje)}
+                  {formatCurrency(ticketMedioPeriodo)}
                 </span>
-                <span className="text-[11px] text-[#726C74]">Média por pedido concluído</span>
+                <span className="text-[11px] text-[#726C74]">Média por entrega realizada</span>
+              </div>
+
+              {/* Faturamento da Semana */}
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
+                <div className="flex justify-between items-center text-[#726C74] text-xs font-bold uppercase">
+                  <span>Faturamento da Semana</span>
+                  <DollarSign className="w-4 h-4 text-blue-600" />
+                </div>
+                <span className="text-2xl font-black text-blue-700 font-['DM_Sans'] block">
+                  {formatCurrency(faturamentoSemana)}
+                </span>
+                <span className="text-[11px] text-[#726C74]">Últimos 7 dias corridos</span>
+              </div>
+
+              {/* Faturamento do Mês */}
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
+                <div className="flex justify-between items-center text-[#726C74] text-xs font-bold uppercase">
+                  <span>Faturamento do Mês</span>
+                  <Crown className="w-4 h-4 text-purple-600" />
+                </div>
+                <span className="text-2xl font-black text-[#49245B] font-['DM_Sans'] block">
+                  {formatCurrency(faturamentoMes)}
+                </span>
+                <span className="text-[11px] text-[#726C74]">Mês atual completo</span>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Formas de Pagamento Hoje */}
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
-                <h3 className="text-xs font-bold text-[#726C74] uppercase tracking-wider">Vendas de Hoje por Pagamento</h3>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between items-center p-2 rounded-xl bg-[#FCFAF7] border border-[#ECE8F0]">
-                    <div className="flex items-center gap-2"><QrCode className="w-4 h-4 text-[#69318A]" /><span className="font-semibold">Pix</span></div>
-                    <span className="font-bold text-[#28242A]">{formatCurrency(paymentBreakdownHoje.pix)}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-2 rounded-xl bg-[#FCFAF7] border border-[#ECE8F0]">
-                    <div className="flex items-center gap-2"><CreditCard className="w-4 h-4 text-blue-600" /><span className="font-semibold">Cartão</span></div>
-                    <span className="font-bold text-[#28242A]">{formatCurrency(paymentBreakdownHoje.card)}</span>
-                  </div>
-                  <div className="flex justify-between items-center p-2 rounded-xl bg-[#FCFAF7] border border-[#ECE8F0]">
-                    <div className="flex items-center gap-2"><Banknote className="w-4 h-4 text-emerald-600" /><span className="font-semibold">Na Entrega</span></div>
-                    <span className="font-bold text-[#28242A]">{formatCurrency(paymentBreakdownHoje.delivery)}</span>
-                  </div>
+            {/* Painel: Produtos mais vendidos e Horários de Maior Volume */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
+              {/* Produtos mais vendidos */}
+              <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-[#28242A] flex items-center gap-2">
+                    <Flame className="w-4 h-4 text-[#69318A]" />
+                    <span>Produtos Mais Vendidos</span>
+                  </h3>
+                  <span className="text-xs text-[#726C74]">{dateFilter}</span>
                 </div>
+
+                {topProdutosPeriodo.length === 0 ? (
+                  <p className="text-xs text-[#726C74] py-4 text-center">Nenhum produto concluído no período.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {topProdutosPeriodo.map((item, idx) => (
+                      <div key={idx} className="flex items-center justify-between p-2.5 rounded-xl bg-[#FCFAF7] border border-[#ECE8F0] text-xs">
+                        <div className="flex items-center gap-2.5">
+                          <span className="w-6 h-6 rounded-full bg-purple-100 text-[#69318A] font-extrabold flex items-center justify-center text-[11px]">
+                            {idx + 1}
+                          </span>
+                          <span className="font-bold text-[#28242A]">{item.name}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-black text-[#69318A] block">{item.quantity} un.</span>
+                          <span className="text-[10px] text-[#726C74]">{formatCurrency(item.total)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* Campeão de Vendas */}
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
-                <h3 className="text-xs font-bold text-[#726C74] uppercase tracking-wider">Campeão de Vendas</h3>
-                <div className="p-4 rounded-xl bg-purple-50 border border-purple-100 flex items-center gap-3">
-                  <Flame className="w-8 h-8 text-[#69318A]" />
-                  <div>
-                    <span className="text-sm font-bold text-[#28242A] block">{topProduct}</span>
-                    <span className="text-[11px] text-[#726C74]">Item com maior saída no histórico</span>
-                  </div>
+              {/* Horários com Maior Volume de Pedidos */}
+              <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-[#28242A] flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-[#69318A]" />
+                    <span>Horários de Maior Volume</span>
+                  </h3>
+                  <span className="text-xs text-[#726C74]">Pico operacional</span>
                 </div>
-              </div>
 
-              {/* Ações Rápidas */}
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
-                <h3 className="text-xs font-bold text-[#726C74] uppercase tracking-wider">Ações de Operação</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => {
-                      toggleStoreOpen(false, '30 minutos');
-                      logAudit('Pausa Operacional', 'Loja', 'Pausada por 30 minutos');
-                    }}
-                    className="p-2.5 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer text-center"
-                  >
-                    Pausar 30 min
-                  </button>
-                  <button
-                    onClick={() => {
-                      toggleStoreOpen(false, '1 hora');
-                      logAudit('Pausa Operacional', 'Loja', 'Pausada por 1 hora');
-                    }}
-                    className="p-2.5 rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-xs font-bold hover:bg-amber-100 cursor-pointer text-center"
-                  >
-                    Pausar 1 hora
-                  </button>
-                  <button
-                    onClick={() => {
-                      toggleStoreOpen(true);
-                      logAudit('Reabertura', 'Loja', 'Loja reaberta para pedidos');
-                    }}
-                    className="col-span-2 p-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 cursor-pointer text-center"
-                  >
-                    {isOpen ? '✓ Loja Aberta (Aceitando Pedidos)' : 'Reabrir Loja Agora'}
-                  </button>
+                <div className="space-y-3 pt-2">
+                  {horariosPico.map((faixa, idx) => (
+                    <div key={idx} className="space-y-1 text-xs">
+                      <div className="flex justify-between font-semibold text-[#28242A]">
+                        <span>{faixa.label}</span>
+                        <span>{faixa.count} pedidos</span>
+                      </div>
+                      <div className="w-full h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-[#69318A] rounded-full transition-all duration-500" 
+                          style={{ width: `${Math.max(faixa.percent, 4)}%` }} 
+                        />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
 
-            {/* Últimos Pedidos */}
-            <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
-              <div className="flex justify-between items-center">
-                <h3 className="text-sm font-bold text-[#28242A]">Últimos Pedidos Recebidos</h3>
+            {/* Ações Rápidas de Operação */}
+            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-bold text-[#28242A]">Ações Rápidas do Gestor</h4>
+                <p className="text-xs text-[#726C74]">Acesse os pedidos em tempo real ou gerencie finanças com 1 clique</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => setActiveTab('pedidos')}
-                  className="text-xs text-[#69318A] font-bold hover:underline cursor-pointer"
+                  className="px-4 py-2.5 bg-[#69318A] text-white rounded-xl text-xs font-bold hover:bg-[#572185] cursor-pointer shadow-xs flex items-center gap-2"
                 >
-                  Ver todos ({orders.length}) →
+                  <ShoppingBag className="w-4 h-4" />
+                  <span>Ver Pedidos ({countNew} novos)</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('financeiro')}
+                  className="px-4 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold hover:bg-emerald-700 cursor-pointer shadow-xs flex items-center gap-2"
+                >
+                  <Wallet className="w-4 h-4" />
+                  <span>Painel Financeiro</span>
                 </button>
               </div>
-
-              {orders.slice(0, 5).map(o => (
-                <div key={o.id || o.order_number} className="p-3 rounded-xl bg-[#FCFAF7] border border-[#ECE8F0] flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-bold text-[#28242A]">#{o.order_number} - {o.customer_name}</span>
-                    <p className="text-[11px] text-[#726C74]">{o.items.length} itens • {formatCurrency(o.total)} • {new Date(o.created_at).toLocaleTimeString('pt-BR')}</p>
-                  </div>
-                  <span className={`px-2.5 py-1 rounded-lg font-bold text-[11px] ${STATUS_CONFIG[o.status]?.bg} ${STATUS_CONFIG[o.status]?.text}`}>
-                    {STATUS_CONFIG[o.status]?.label}
-                  </span>
-                </div>
-              ))}
             </div>
           </div>
         )}
 
-        {/* 2. PEDIDOS EM TEMPO REAL (GESTÃO OPERACIONAL COMPLETA) */}
+        {/* 2. PEDIDOS EM TEMPO REAL */}
         {activeTab === 'pedidos' && (
           <div className="p-4 sm:p-8 space-y-6">
             
@@ -1056,6 +1374,9 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 bg-[#FCFAF7] border border-[#ECE8F0] focus:border-[#69318A] rounded-xl text-xs sm:text-sm text-[#28242A] outline-none"
                   />
+                  {searchQuery && (
+                    <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400">✕</button>
+                  )}
                 </div>
 
                 {/* Filtro de Modalidade */}
@@ -1075,13 +1396,12 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 {[
                   { id: 'all', label: 'Todos Ativos', count: activeOperationalOrders.length },
                   { id: 'new', label: 'Novos', count: countNew, isAlert: true },
-                  { id: 'confirmed', label: 'Confirmados', count: activeOperationalOrders.filter(o => o.status === 'confirmed').length },
-                  { id: 'preparing', label: 'Em Preparo', count: activeOperationalOrders.filter(o => o.status === 'preparing').length },
-                  { id: 'delivering', label: 'Em Entrega', count: activeOperationalOrders.filter(o => o.status === 'delivering').length },
-                  { id: 'ready_for_pickup', label: 'Pronto p/ Retirada', count: activeOperationalOrders.filter(o => o.status === 'ready_for_pickup').length },
+                  { id: 'preparing', label: 'Em Preparo', count: countPreparing },
+                  { id: 'delivering', label: 'Em Entrega', count: countDelivering },
+                  { id: 'ready_for_pickup', label: 'Pronto p/ Retirada', count: countReadyPickup },
                   { id: 'done', label: 'Concluídos', count: countDone },
-                  { id: 'cancelled', label: 'Cancelados', count: orders.filter(o => o.status === 'cancelled').length },
-                  { id: 'archived', label: 'Arquivados', count: orders.filter(o => o.is_archived).length },
+                  { id: 'cancelled', label: 'Cancelados', count: countCancelled },
+                  { id: 'archived', label: 'Arquivados', count: countArchived },
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -1105,38 +1425,69 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               </div>
             </div>
 
-            {/* Lista de Pedidos */}
+            {/* Listagem de Cards de Pedidos */}
             <div className="space-y-4">
               {orders
                 .filter(order => {
-                  if (statusFilter === 'archived') return order.is_archived;
-                  if (!order.is_archived && statusFilter !== 'archived') {
-                    if (statusFilter !== 'all' && order.status !== statusFilter) return false;
+                  if (order.deleted_at) return false;
+
+                  // 1. Filtro por Aba de Status
+                  let matchesStatus = false;
+                  if (statusFilter === 'archived') {
+                    matchesStatus = !!order.is_archived;
+                  } else if (statusFilter === 'all') {
+                    matchesStatus = !order.is_archived && !['cancelled', 'done', 'completed'].includes(order.status);
+                  } else if (statusFilter === 'new') {
+                    matchesStatus = !order.is_archived && order.status === 'new';
+                  } else if (statusFilter === 'preparing') {
+                    matchesStatus = !order.is_archived && (order.status === 'preparing' || order.status === 'confirmed');
+                  } else if (statusFilter === 'delivering') {
+                    matchesStatus = !order.is_archived && (order.status === 'delivering' || order.status === 'out_for_delivery');
+                  } else if (statusFilter === 'ready_for_pickup') {
+                    matchesStatus = !order.is_archived && order.status === 'ready_for_pickup';
+                  } else if (statusFilter === 'done') {
+                    matchesStatus = order.status === 'done' || order.status === 'completed';
+                  } else if (statusFilter === 'cancelled') {
+                    matchesStatus = order.status === 'cancelled';
+                  } else {
+                    matchesStatus = true;
                   }
-                  if (fulfillmentFilter !== 'all' && order.fulfillment_type !== fulfillmentFilter) return false;
-                  if (searchQuery) {
-                    const q = searchQuery.toLowerCase();
-                    const matchNum = order.order_number.toLowerCase().includes(q);
-                    const matchName = order.customer_name.toLowerCase().includes(q);
-                    const matchPhone = (order.customer_phone || '').includes(q);
+
+                  if (!matchesStatus) return false;
+
+                  // 2. Filtro por Modalidade (Entrega / Retirada)
+                  if (fulfillmentFilter !== 'all' && order.fulfillment_type !== fulfillmentFilter) {
+                    return false;
+                  }
+
+                  // 3. Busca por texto
+                  if (searchQuery.trim()) {
+                    const q = searchQuery.toLowerCase().trim();
+                    const cleanPhone = (order.customer_phone || '').replace(/\D/g, '');
+                    const cleanQ = q.replace(/\D/g, '');
+                    const matchNum = (order.order_number || '').toLowerCase().includes(q);
+                    const matchName = (order.customer_name || '').toLowerCase().includes(q);
+                    const matchPhone = (order.customer_phone || '').includes(q) || (cleanQ.length > 2 && cleanPhone.includes(cleanQ));
                     const matchNeigh = (order.neighborhood || '').toLowerCase().includes(q);
                     if (!matchNum && !matchName && !matchPhone && !matchNeigh) return false;
                   }
+
                   return true;
                 })
                 .map(order => {
+                  const orderId = order.id || order.order_number;
+                  const isUpdating = updatingOrderId === orderId;
                   const statusInfo = STATUS_CONFIG[order.status] || STATUS_CONFIG.new;
                   const StatusIcon = statusInfo.icon;
                   const isNew = order.status === 'new';
                   const isPickup = order.fulfillment_type === 'pickup';
                   
-                  // Pedido Atrasado (>45 min)
-                  const isDelayed = !['done', 'cancelled'].includes(order.status) && 
+                  const isDelayed = !['done', 'completed', 'cancelled'].includes(order.status) && 
                     (Date.now() - new Date(order.created_at).getTime()) > 45 * 60 * 1000;
 
                   return (
                     <div
-                      key={order.id || order.order_number}
+                      key={orderId}
                       className={`bg-white rounded-3xl border transition-all p-5 sm:p-6 space-y-4 ${
                         isNew 
                           ? 'border-[#69318A] shadow-md ring-2 ring-[#69318A]/20 bg-purple-50/10' 
@@ -1160,7 +1511,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                           <span className={`px-2.5 py-0.5 rounded-lg text-xs font-bold ${
                             isPickup ? 'bg-teal-50 text-teal-700 border border-teal-200' : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
                           }`}>
-                            {isPickup ? '🏪 Retirada' : '🛵 Entrega'}
+                            {isPickup ? '🏪 Retirada no Balcão' : '🛵 Entrega Delivery'}
                           </span>
 
                           {isNew && (
@@ -1178,165 +1529,250 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                         </div>
 
                         <div className="flex items-center gap-3 text-xs text-[#726C74]">
-                          <div className="flex items-center gap-1">
+                          <span className="flex items-center gap-1">
                             <Clock className="w-3.5 h-3.5" />
-                            <span>{new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</span>
-                          </div>
+                            {new Date(order.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })} • {new Date(order.created_at).toLocaleDateString('pt-BR')}
+                          </span>
 
                           <button
-                            onClick={() => handlePrintOrder(order)}
-                            className="p-1.5 rounded-lg border border-[#ECE8F0] hover:bg-[#F3EDF6] text-[#726C74] hover:text-[#69318A] transition-colors cursor-pointer"
-                            title="Imprimir comanda térmica (80mm)"
+                            onClick={() => printThermalReceipt(order)}
+                            title="Imprimir Comanda 80mm"
+                            className="p-1.5 bg-gray-50 hover:bg-gray-100 text-[#726C74] rounded-lg border border-[#ECE8F0] cursor-pointer"
                           >
                             <Printer className="w-4 h-4" />
-                          </button>
-
-                          {/* Arquivar */}
-                          <button
-                            onClick={() => handleToggleArchive(order.id || order.order_number, !!order.is_archived)}
-                            className="p-1.5 rounded-lg border border-[#ECE8F0] hover:bg-gray-100 text-[#726C74] transition-colors cursor-pointer"
-                            title={order.is_archived ? 'Desarquivar pedido' : 'Arquivar da tela operacional'}
-                          >
-                            {order.is_archived ? <ArchiveRestore className="w-4 h-4" /> : <Archive className="w-4 h-4" />}
-                          </button>
-
-                          {/* Excluir Logicamente */}
-                          <button
-                            onClick={() => handleDeleteOrder(order.id || order.order_number)}
-                            className="p-1.5 rounded-lg border border-red-100 hover:bg-red-50 text-red-500 transition-colors cursor-pointer"
-                            title="Excluir logicamente"
-                          >
-                            <Trash2 className="w-4 h-4" />
                           </button>
                         </div>
                       </div>
 
-                      {/* Dados do Cliente e Endereço */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                        <div>
-                          <p className="text-sm font-bold text-[#28242A]">{order.customer_name}</p>
-                          {order.customer_phone && <p className="text-[#726C74]">📞 {order.customer_phone}</p>}
+                      {/* Informações do Cliente e Endereço */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs bg-[#FCFAF7] p-3.5 rounded-2xl border border-[#ECE8F0]">
+                        <div className="space-y-1">
+                          <div className="font-bold text-[#28242A] flex items-center gap-2">
+                            <span>👤 {order.customer_name}</span>
+                            {order.customer_phone && (
+                              <a
+                                href={`https://wa.me/55${order.customer_phone.replace(/\D/g, '')}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-emerald-700 hover:underline flex items-center gap-0.5 font-semibold text-[11px]"
+                              >
+                                💬 WhatsApp
+                              </a>
+                            )}
+                          </div>
+                          <div className="text-[#726C74]">
+                            📞 {order.customer_phone || 'Telefone não informado'}
+                          </div>
                         </div>
-                        <div className="text-[#726C74]">
-                          {order.street ? (
-                            <p>📍 {order.street}, Nº {order.number || 'S/N'} - {order.neighborhood} {order.complement ? `(${order.complement})` : ''}</p>
-                          ) : (
-                            <p>Retirada no balcão da loja</p>
-                          )}
+
+                        <div className="space-y-1">
+                          <div className="font-bold text-[#28242A]">
+                            {isPickup ? '🏪 Retirada na Açaiteria' : '📍 Endereço de Entrega:'}
+                          </div>
+                          <div className="text-[#726C74]">
+                            {isPickup ? (
+                              <span>Retirada direta no balcão da loja</span>
+                            ) : (
+                              <span>
+                                {order.street ? `${order.street}, Nº ${order.number || 'S/N'}` : 'Endereço não informado'}
+                                {order.neighborhood ? ` - ${order.neighborhood}` : ''}
+                                {order.complement ? ` (${order.complement})` : ''}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
                       {/* Itens do Pedido */}
-                      <div className="bg-[#FCFAF7] p-4 rounded-2xl border border-[#ECE8F0] space-y-2">
-                        <div className="space-y-1.5 divide-y divide-[#ECE8F0]">
+                      <div className="space-y-2">
+                        <div className="text-xs font-bold text-[#726C74] uppercase tracking-wider">
+                          Itens do Pedido ({order.items?.length || 0})
+                        </div>
+                        <div className="divide-y divide-[#ECE8F0] border border-[#ECE8F0] rounded-2xl bg-white p-2">
                           {(order.items || []).map((item, idx) => (
-                            <div key={idx} className={`pt-1.5 text-xs ${idx === 0 ? 'pt-0' : ''}`}>
-                              <div className="flex justify-between font-bold text-[#28242A]">
-                                <span>{item.quantity}x {item.name} {item.size ? `(${item.size})` : ''}</span>
-                                <span>{formatCurrency(item.totalPrice || item.unitPrice)}</span>
+                            <div key={idx} className="py-2.5 first:pt-1 last:pb-1 text-xs space-y-1">
+                              <div className="flex justify-between items-start">
+                                <div className="font-bold text-[#28242A]">
+                                  <span className="text-[#69318A] font-extrabold mr-1.5">{item.quantity}x</span>
+                                  {item.name}
+                                  {item.size && (
+                                    <span className="ml-1.5 text-xs text-[#726C74] font-normal">({item.size})</span>
+                                  )}
+                                </div>
+                                <span className="font-bold text-[#49245B] font-['DM_Sans']">
+                                  {formatCurrency(item.totalPrice || item.unitPrice * item.quantity)}
+                                </span>
                               </div>
-                              {item.base && <p className="text-[11px] text-[#726C74]">Base: {item.base}</p>}
-                              {item.additionals && item.additionals.length > 0 && (
-                                <p className="text-[11px] text-[#69318A]">Adicionais: {item.additionals.join(', ')}</p>
+
+                              {item.base && (
+                                <div className="text-[11px] text-[#726C74] pl-5">
+                                  Base: <span className="font-semibold">{item.base}</span>
+                                </div>
                               )}
-                              {item.notes && <p className="text-[11px] text-amber-800 italic">Obs do cliente: {item.notes}</p>}
+                              {item.additionals && item.additionals.length > 0 && (
+                                <div className="text-[11px] text-[#726C74] pl-5 flex flex-wrap gap-1">
+                                  <span>Adicionais:</span>
+                                  {item.additionals.map((add, aIdx) => (
+                                    <span key={aIdx} className="bg-purple-50 text-[#69318A] px-1.5 py-0.5 rounded font-medium">
+                                      +{add}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {item.notes && (
+                                <div className="text-[11px] text-amber-800 bg-amber-50 p-1.5 rounded-lg border border-amber-200 mt-1">
+                                  Obs do item: {item.notes}
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
                       </div>
 
-                      {/* Observações Internas da Equipe */}
-                      <div className="p-3 bg-purple-50/40 rounded-xl border border-purple-100 text-xs">
-                        {editingNotesId === (order.id || order.order_number) ? (
-                          <div className="space-y-2">
-                            <label className="font-bold text-[#69318A] block">Observações Internas (Cozinha / Equipe):</label>
-                            <input
-                              type="text"
-                              value={internalNoteText}
-                              onChange={(e) => setInternalNoteText(e.target.value)}
-                              placeholder="Ex: Cliente pediu talher extra, ponto de referência..."
-                              className="w-full p-2 bg-white border border-[#ECE8F0] rounded-lg outline-none text-xs"
-                            />
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => handleSaveInternalNotes(order.id || order.order_number, internalNoteText)}
-                                className="px-3 py-1 bg-[#69318A] text-white rounded-lg font-bold text-[11px]"
-                              >
-                                Salvar
-                              </button>
-                              <button
-                                onClick={() => setEditingNotesId(null)}
-                                className="px-3 py-1 bg-gray-200 text-gray-700 rounded-lg text-[11px]"
-                              >
-                                Cancelar
-                              </button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex justify-between items-center">
-                            <span className="text-[#726C74]">
-                              <strong className="text-[#28242A]">Nota interna:</strong> {order.internal_notes || 'Nenhuma observação interna'}
-                            </span>
-                            <button
-                              onClick={() => {
-                                setEditingNotesId(order.id || order.order_number);
-                                setInternalNoteText(order.internal_notes || '');
-                              }}
-                              className="text-[11px] text-[#69318A] font-bold hover:underline cursor-pointer"
-                            >
-                              Editar
-                            </button>
-                          </div>
-                        )}
-                      </div>
+                      {/* Observações Gerais do Cliente */}
+                      {order.notes && (
+                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 space-y-0.5">
+                          <strong className="block">Observação do Cliente:</strong>
+                          <p>{order.notes}</p>
+                        </div>
+                      )}
 
                       {/* Motivo do Cancelamento se Houver */}
                       {order.status === 'cancelled' && order.cancellation_reason && (
-                        <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-2xl text-xs text-red-700 space-y-0.5">
                           <strong>Motivo do cancelamento:</strong> {order.cancellation_reason}
                         </div>
                       )}
 
-                      {/* Rodapé do Card com Ações Respeitando o Fluxo Delivery vs Pickup */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 pt-1 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[#726C74]">Total:</span>
-                          <span className="text-lg font-black text-[#49245B] font-['DM_Sans']">{formatCurrency(order.total)}</span>
-                          <span className="text-[11px] text-[#726C74] uppercase">({order.payment_method})</span>
+                      {/* Observações Internas da Equipe */}
+                      <div className="p-3 bg-purple-50/50 rounded-2xl border border-purple-100 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-[#69318A] flex items-center gap-1.5">
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>Observações Internas (Equipe):</span>
+                          </span>
+                          {editingNotesId !== orderId && (
+                            <button
+                              onClick={() => {
+                                setEditingNotesId(orderId);
+                                setInternalNoteText(order.internal_notes || '');
+                              }}
+                              className="text-[#69318A] hover:underline font-bold text-[11px] cursor-pointer"
+                            >
+                              {order.internal_notes ? 'Editar nota' : '+ Adicionar nota'}
+                            </button>
+                          )}
+                        </div>
+
+                        {editingNotesId === orderId ? (
+                          <div className="space-y-2 pt-1">
+                            <textarea
+                              rows={2}
+                              value={internalNoteText}
+                              onChange={e => setInternalNoteText(e.target.value)}
+                              placeholder="Ex: Cliente pediu copo extra, troco separado..."
+                              className="w-full p-2 bg-white border border-[#ECE8F0] rounded-xl text-xs outline-none"
+                            />
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                onClick={() => setEditingNotesId(null)}
+                                className="px-3 py-1 bg-gray-200 text-[#28242A] rounded-lg text-xs font-semibold cursor-pointer"
+                              >
+                                Cancelar
+                              </button>
+                              <button
+                                onClick={() => handleSaveNotes(orderId)}
+                                className="px-3 py-1 bg-[#69318A] text-white rounded-lg text-xs font-bold shadow-xs cursor-pointer"
+                              >
+                                Salvar Nota
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-[#726C74] italic">
+                            {order.internal_notes || 'Nenhuma nota interna registrada.'}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Rodapé do Card com Valores e Ações */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#ECE8F0] text-xs">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <div>
+                            <span className="text-[#726C74] block text-[10px]">Forma de Pagamento</span>
+                            <span className="font-bold text-[#28242A] uppercase">{order.payment_method}</span>
+                          </div>
+                          <div>
+                            <span className="text-[#726C74] block text-[10px]">Subtotal / Frete</span>
+                            <span className="text-[#28242A]">{formatCurrency(order.subtotal)} + {formatCurrency(order.delivery_fee)}</span>
+                          </div>
+                          <div>
+                            <span className="text-[#726C74] block text-[10px]">Total Geral</span>
+                            <span className="text-base font-black text-[#49245B] font-['DM_Sans']">{formatCurrency(order.total)}</span>
+                          </div>
                         </div>
 
                         <div className="flex flex-wrap items-center gap-2">
                           
-                          {/* FLUXO PARA ENTREGA */}
-                          {!isPickup && (
+                          {/* Indicador de Salvamento Ativo */}
+                          {isUpdating && (
+                            <span className="text-xs text-[#69318A] font-bold flex items-center gap-1">
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Salvando no banco...</span>
+                            </span>
+                          )}
+
+                          {/* 1. SE STATUS === NOVO */}
+                          {order.status === 'new' && (
                             <>
-                              {isNew && (
+                              <button
+                                disabled={isUpdating}
+                                onClick={() => setCancellingOrderId(order.order_number)}
+                                className="px-3.5 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-all border border-red-200 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                <X className="w-4 h-4" />
+                                <span>Cancelar pedido</span>
+                              </button>
+                              <button
+                                disabled={isUpdating}
+                                onClick={() => handleUpdateStatus(orderId, 'preparing')}
+                                className="px-4 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                <CheckCircle2 className="w-4 h-4" />
+                                <span>✓ Aceitar pedido</span>
+                              </button>
+                            </>
+                          )}
+
+                          {/* 2. SE STATUS === EM PREPARO */}
+                          {(order.status === 'preparing' || order.status === 'confirmed') && (
+                            <>
+                              <button
+                                disabled={isUpdating}
+                                onClick={() => setCancellingOrderId(order.order_number)}
+                                className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-all border border-red-200 cursor-pointer disabled:opacity-50"
+                              >
+                                Cancelar
+                              </button>
+                              {isPickup ? (
                                 <button
-                                  onClick={() => handleUpdateStatus(order.id || order.order_number, 'confirmed')}
-                                  className="px-3.5 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                                  disabled={isUpdating}
+                                  onClick={() => handleUpdateStatus(orderId, 'ready_for_pickup')}
+                                  className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                                 >
-                                  <CheckCircle2 className="w-4 h-4" />
-                                  <span>Confirmar</span>
+                                  <Store className="w-4 h-4" />
+                                  <span>🏪 Pronto para retirada</span>
                                 </button>
-                              )}
-                              {(order.status === 'confirmed' || isNew) && (
-                                <button
-                                  onClick={() => handleUpdateStatus(order.id || order.order_number, 'preparing')}
-                                  className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                                >
-                                  <ChefHat className="w-4 h-4" />
-                                  <span>Colocar em preparo</span>
-                                </button>
-                              )}
-                              {order.status === 'preparing' && (
+                              ) : (
                                 <>
                                   <button
+                                    disabled={isUpdating}
                                     onClick={async () => {
                                       try {
                                         const data = await createDeliveryOffer(order.order_number, order.id, order.delivery_fee || 5.00);
                                         if (data && data.success) {
-                                          alert(`Corrida do pedido #${order.order_number} despachada para os entregadores!`);
-                                          setActiveTab('entregas_mapa');
+                                          setToastMessage({ text: `Corrida do pedido #${order.order_number} despachada para os entregadores!`, type: 'success' });
+                                          setActiveTab('entregadores');
                                         } else {
                                           alert(data?.error || 'Erro ao despachar corrida.');
                                         }
@@ -1344,88 +1780,77 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                                         alert('Erro ao despachar corrida.');
                                       }
                                     }}
-                                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-xs"
-                                    title="Disponibilizar corrida para os entregadores no app"
+                                    className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-[#69318A] border border-purple-200 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
                                   >
-                                    <Navigation className="w-4 h-4" />
-                                    <span>Despachar Entregador</span>
+                                    <MapPin className="w-3.5 h-3.5" />
+                                    <span>📍 Despachar Entregador</span>
                                   </button>
-
                                   <button
-                                    onClick={() => handleUpdateStatus(order.id || order.order_number, 'delivering')}
-                                    className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                                    disabled={isUpdating}
+                                    onClick={() => handleUpdateStatus(orderId, 'delivering')}
+                                    className="px-4 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                                   >
                                     <Truck className="w-4 h-4" />
-                                    <span>Saiu para entrega</span>
+                                    <span>🛵 Saiu para entrega</span>
                                   </button>
                                 </>
                               )}
-                              {order.status === 'delivering' && (
-                                <button
-                                  onClick={() => handleUpdateStatus(order.id || order.order_number, 'done')}
-                                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                                >
-                                  <PackageCheck className="w-4 h-4" />
-                                  <span>Marcar como entregue</span>
-                                </button>
-                              )}
                             </>
                           )}
 
-                          {/* FLUXO PARA RETIRADA NO BALCÃO */}
-                          {isPickup && (
+                          {/* 3. SE STATUS === EM ENTREGA */}
+                          {(order.status === 'delivering' || order.status === 'out_for_delivery') && (
                             <>
-                              {isNew && (
-                                <button
-                                  onClick={() => handleUpdateStatus(order.id || order.order_number, 'confirmed')}
-                                  className="px-3.5 py-2 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
-                                >
-                                  <CheckCircle2 className="w-4 h-4" />
-                                  <span>Confirmar</span>
-                                </button>
-                              )}
-                              {(order.status === 'confirmed' || isNew) && (
-                                <button
-                                  onClick={() => handleUpdateStatus(order.id || order.order_number, 'preparing')}
-                                  className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                                >
-                                  <ChefHat className="w-4 h-4" />
-                                  <span>Colocar em preparo</span>
-                                </button>
-                              )}
-                              {order.status === 'preparing' && (
-                                <button
-                                  onClick={() => handleUpdateStatus(order.id || order.order_number, 'ready_for_pickup')}
-                                  className="px-3.5 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                                >
-                                  <Store className="w-4 h-4" />
-                                  <span>Pronto para retirada</span>
-                                </button>
-                              )}
-                              {order.status === 'ready_for_pickup' && (
-                                <button
-                                  onClick={() => handleUpdateStatus(order.id || order.order_number, 'done')}
-                                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
-                                >
-                                  <PackageCheck className="w-4 h-4" />
-                                  <span>Marcar como retirado</span>
-                                </button>
-                              )}
+                              <button
+                                onClick={() => setActiveTab('entregadores')}
+                                className="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-[#69318A] rounded-xl text-xs font-bold border border-purple-200 cursor-pointer flex items-center gap-1"
+                              >
+                                <MapPin className="w-3.5 h-3.5" />
+                                <span>Ver no Mapa GPS</span>
+                              </button>
+                              <button
+                                disabled={isUpdating}
+                                onClick={() => handleUpdateStatus(orderId, 'done')}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                <CheckCircle2 className="w-4 h-4" />
+                                <span>✓ Confirmar entrega</span>
+                              </button>
                             </>
                           )}
 
-                          {/* Botão de Cancelar */}
-                          {order.status !== 'done' && order.status !== 'cancelled' && (
+                          {/* 4. SE STATUS === PRONTO PARA RETIRADA */}
+                          {order.status === 'ready_for_pickup' && (
                             <button
-                              onClick={() => {
-                                setCancellingOrderId(order.id || order.order_number);
-                                setCancellationReason('');
-                              }}
-                              className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-semibold border border-red-200 transition-all cursor-pointer"
+                              disabled={isUpdating}
+                              onClick={() => handleUpdateStatus(orderId, 'done')}
+                              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                             >
-                              Cancelar pedido
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>✓ Confirmar retirada</span>
                             </button>
                           )}
+
+                          {/* 5 & 6. CONCLUÍDOS / CANCELADOS */}
+                          {['done', 'completed', 'cancelled'].includes(order.status) && (
+                            <>
+                              <button
+                                onClick={() => handleToggleArchive(orderId, order.is_archived || false)}
+                                className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-[#28242A] rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5"
+                              >
+                                <Archive className="w-3.5 h-3.5" />
+                                <span>{order.is_archived ? 'Desarquivar' : 'Arquivar'}</span>
+                              </button>
+                              <button
+                                onClick={() => handleDeleteOrder(orderId)}
+                                className="p-2 text-red-500 hover:bg-red-50 rounded-xl transition-colors cursor-pointer"
+                                title="Excluir Permanentemente"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </>
+                          )}
+
                         </div>
                       </div>
                     </div>
@@ -1435,16 +1860,90 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* 2.1 ENTREGAS EM TEMPO REAL (MAPA LIVE GPS) */}
-        {activeTab === 'entregas_mapa' && <AdminLiveDeliveries />}
-
-        {/* 3. CAIXA & FECHAMENTO DIÁRIO */}
-        {activeTab === 'caixa' && (
+        {/* 3. FINANCEIRO & FECHAMENTO */}
+        {activeTab === 'financeiro' && (
           <div className="p-4 sm:p-8 space-y-6">
+            
+            {/* Header Financeiro com Informação de Reinício Diário */}
+            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-[#28242A]">Painel Financeiro & Fechamento</h3>
+                <p className="text-xs text-[#726C74]">O faturamento diário reinicia a cada novo dia visualmente, mantendo todo o histórico seguro no banco</p>
+              </div>
+              <button
+                onClick={handleExportCSV}
+                className="px-4 py-2 bg-[#69318A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#572185] cursor-pointer shadow-xs"
+              >
+                <Download className="w-4 h-4" />
+                <span>Exportar Relatório Financeiro (CSV)</span>
+              </button>
+            </div>
+
+            {/* Grid Financeiro Principal */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
+                <span className="text-xs font-bold text-[#726C74] uppercase">Faturamento Hoje</span>
+                <span className="text-2xl font-black text-[#49245B] block font-['DM_Sans']">{formatCurrency(faturamentoHoje)}</span>
+                <span className="text-[11px] text-emerald-600">✓ Inicia em R$ 0,00 a cada novo dia</span>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
+                <span className="text-xs font-bold text-[#726C74] uppercase">Faturamento da Semana</span>
+                <span className="text-2xl font-black text-blue-700 block font-['DM_Sans']">{formatCurrency(faturamentoSemana)}</span>
+                <span className="text-[11px] text-[#726C74]">Últimos 7 dias de operação</span>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
+                <span className="text-xs font-bold text-[#726C74] uppercase">Faturamento do Mês</span>
+                <span className="text-2xl font-black text-purple-700 block font-['DM_Sans']">{formatCurrency(faturamentoMes)}</span>
+                <span className="text-[11px] text-[#726C74]">Mês corrente</span>
+              </div>
+            </div>
+
+            {/* Detalhamento por Forma de Pagamento */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-2">
+                <div className="flex items-center gap-2 text-[#69318A] font-bold text-xs">
+                  <QrCode className="w-4 h-4" />
+                  <span>Pix Online / Loja</span>
+                </div>
+                <span className="text-xl font-bold text-[#28242A] block">{formatCurrency(pagamentosPeriodo.pix)}</span>
+                <span className="text-[11px] text-[#726C74]">Recebimentos instantâneos</span>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-2">
+                <div className="flex items-center gap-2 text-blue-600 font-bold text-xs">
+                  <CreditCard className="w-4 h-4" />
+                  <span>Cartão (Online / Maquininha)</span>
+                </div>
+                <span className="text-xl font-bold text-[#28242A] block">{formatCurrency(pagamentosPeriodo.card)}</span>
+                <span className="text-[11px] text-[#726C74]">Crédito e Débito</span>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-2">
+                <div className="flex items-center gap-2 text-emerald-600 font-bold text-xs">
+                  <Banknote className="w-4 h-4" />
+                  <span>Dinheiro na Entrega</span>
+                </div>
+                <span className="text-xl font-bold text-[#28242A] block">{formatCurrency(pagamentosPeriodo.delivery)}</span>
+                <span className="text-[11px] text-[#726C74]">Pagamentos em espécie</span>
+              </div>
+
+              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-2">
+                <div className="flex items-center gap-2 text-amber-600 font-bold text-xs">
+                  <Truck className="w-4 h-4" />
+                  <span>Taxas de Entrega</span>
+                </div>
+                <span className="text-xl font-bold text-[#28242A] block">{formatCurrency(pagamentosPeriodo.deliveryFees)}</span>
+                <span className="text-[11px] text-[#726C74]">Total de fretes cobrados</span>
+              </div>
+            </div>
+
+            {/* Controle de Caixa Diário */}
             <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex flex-wrap justify-between items-center gap-4">
               <div>
-                <h3 className="text-base font-bold text-[#28242A]">Controle de Caixa Diário</h3>
-                <p className="text-xs text-[#726C74]">Abertura, sangrias, reforços e fechamento de caixa</p>
+                <h4 className="text-sm font-bold text-[#28242A]">Controle de Caixa & Operação Física</h4>
+                <p className="text-xs text-[#726C74]">Abertura de caixa, sangrias, reforços e fechamento da gaveta</p>
               </div>
 
               <div className="flex items-center gap-2">
@@ -1501,55 +2000,356 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               </div>
             </div>
 
-            {/* Status da Sessão de Caixa */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-2">
-                <span className="text-xs font-bold text-[#726C74] uppercase">Status do Caixa</span>
-                <div className="flex items-center gap-2">
-                  <span className={`w-3 h-3 rounded-full ${cashSession ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
-                  <span className="text-lg font-bold text-[#28242A]">
-                    {cashSession ? 'Caixa Aberto' : 'Caixa Fechado'}
-                  </span>
-                </div>
-                {cashSession && (
-                  <p className="text-xs text-[#726C74]">
-                    Aberto por {cashSession.opened_by} às {new Date(cashSession.opened_at).toLocaleTimeString('pt-BR')}
-                  </p>
-                )}
-              </div>
+            {/* Histórico Financeiro por Data */}
+            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+              <h4 className="text-sm font-bold text-[#28242A]">Histórico de Vendas Concluídas por Data</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-[#ECE8F0] text-[#726C74] font-bold">
+                      <th className="pb-3">Data</th>
+                      <th className="pb-3">Total de Pedidos</th>
+                      <th className="pb-3">Concluídos</th>
+                      <th className="pb-3">Cancelados</th>
+                      <th className="pb-3">Ticket Médio</th>
+                      <th className="pb-3 text-right">Faturamento Líquido</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#ECE8F0]">
+                    {Array.from(new Set(orders.map(o => getSaoPauloDate(o.created_at))))
+                      .sort((a, b) => b.localeCompare(a))
+                      .slice(0, 15)
+                      .map((dateStr, idx) => {
+                        const dayOrders = orders.filter(o => !o.deleted_at && getSaoPauloDate(o.created_at) === dateStr);
+                        const doneCount = dayOrders.filter(o => o.status === 'done').length;
+                        const cancelCount = dayOrders.filter(o => o.status === 'cancelled').length;
+                        const totalFat = dayOrders.filter(o => o.status === 'done').reduce((s, o) => s + Number(o.total || 0), 0);
+                        const tMed = doneCount > 0 ? totalFat / doneCount : 0;
+                        const isToday = dateStr === todaySP;
 
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
-                <span className="text-xs font-bold text-[#726C74] uppercase">Fundo Inicial</span>
-                <span className="text-2xl font-black text-[#49245B] font-['DM_Sans'] block">
-                  {formatCurrency(cashSession ? cashSession.initial_cash : 0)}
-                </span>
-                <span className="text-xs text-[#726C74]">Valor inicial na gaveta</span>
-              </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-1">
-                <span className="text-xs font-bold text-[#726C74] uppercase">Total em Dinheiro Hoje</span>
-                <span className="text-2xl font-black text-emerald-600 font-['DM_Sans'] block">
-                  {formatCurrency(paymentBreakdownHoje.delivery)}
-                </span>
-                <span className="text-xs text-[#726C74]">Vendas em dinheiro concluídas</span>
+                        return (
+                          <tr key={idx} className={isToday ? 'bg-purple-50/50 font-semibold' : ''}>
+                            <td className="py-3">
+                              <span className="font-mono">{dateStr.split('-').reverse().join('/')}</span>
+                              {isToday && <span className="ml-2 text-[10px] bg-[#69318A] text-white px-1.5 py-0.2 rounded font-bold">Hoje</span>}
+                            </td>
+                            <td className="py-3">{dayOrders.length}</td>
+                            <td className="py-3 text-emerald-700 font-bold">{doneCount}</td>
+                            <td className="py-3 text-red-600">{cancelCount}</td>
+                            <td className="py-3">{formatCurrency(tMed)}</td>
+                            <td className="py-3 text-right font-black text-[#49245B] font-['DM_Sans']">
+                              {formatCurrency(totalFat)}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Movimentações da Sessão */}
-            {cashMovements.length > 0 && (
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
-                <h4 className="text-xs font-bold text-[#726C74] uppercase">Movimentações de Caixa</h4>
-                <div className="divide-y divide-[#ECE8F0] text-xs">
-                  {cashMovements.map(m => (
-                    <div key={m.id} className="py-2.5 flex justify-between items-center">
-                      <div>
-                        <span className={`font-bold ${m.movement_type === 'sangria' ? 'text-red-600' : 'text-blue-600'}`}>
-                          {m.movement_type === 'sangria' ? '[-] Sangria' : '[+] Suprimento'}
-                        </span>
-                        <p className="text-[#726C74] text-[11px]">{m.description} • por {m.performed_by}</p>
+        {/* 4. CARDÁPIO (PRODUTOS, CATEGORIAS, TAMANHOS, ADICIONAIS, COMBOS, ESTOQUE) */}
+        {activeTab === 'cardapio' && (
+          <div className="p-4 sm:p-8 space-y-6">
+            
+            {/* Sub-navegação do Cardápio */}
+            <div className="bg-white p-3 rounded-2xl border border-[#ECE8F0] shadow-xs flex flex-wrap gap-1.5 text-xs font-bold">
+              {[
+                { id: 'produtos', label: '🍨 Produtos & Itens' },
+                { id: 'categorias', label: '🏷️ Categorias' },
+                { id: 'tamanhos', label: '📏 Tamanhos & Preços' },
+                { id: 'adicionais', label: '🍓 Adicionais & Toppings' },
+                { id: 'combos', label: '🎁 Combos & Cupons' },
+                { id: 'estoque', label: '⚡ Estoque Rápido' },
+              ].map(sub => (
+                <button
+                  key={sub.id}
+                  onClick={() => setCardapioSubTab(sub.id as any)}
+                  className={`px-3.5 py-2 rounded-xl transition-all cursor-pointer ${
+                    cardapioSubTab === sub.id
+                      ? 'bg-[#69318A] text-white shadow-xs'
+                      : 'bg-[#FCFAF7] text-[#726C74] hover:bg-[#F3EDF6] border border-[#ECE8F0]'
+                  }`}
+                >
+                  {sub.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Sub-aba 1: Produtos */}
+            {cardapioSubTab === 'produtos' && (
+              <div className="space-y-4">
+                <div className="flex justify-between items-center bg-white p-4 rounded-2xl border border-[#ECE8F0] shadow-xs">
+                  <div>
+                    <h3 className="text-sm font-bold text-[#28242A]">Gerenciamento de Produtos</h3>
+                    <p className="text-xs text-[#726C74]">Alterações feitas aqui refletem imediatamente na loja dos clientes</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setEditingProduct({
+                        id: `prod_${Date.now()}`,
+                        name: '',
+                        description: '',
+                        price: 19.90,
+                        category: 'acai',
+                        image: '/images/products/acai-tradicional.webp',
+                        isAvailable: true,
+                      });
+                      setIsProductModalOpen(true);
+                    }}
+                    className="px-4 py-2 bg-[#69318A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 hover:bg-[#572185] cursor-pointer shadow-xs"
+                  >
+                    <PlusCircle className="w-4 h-4" />
+                    <span>Novo Produto</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {products.map(prod => (
+                    <div key={prod.id} className="bg-white rounded-2xl border border-[#ECE8F0] overflow-hidden shadow-xs space-y-3 p-4 flex flex-col justify-between">
+                      <div className="space-y-2">
+                        <div className="relative aspect-[4/3] rounded-xl overflow-hidden bg-gray-100 border border-[#ECE8F0]">
+                          <img 
+                            src={prod.image} 
+                            alt={prod.name}
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = '/images/products/product-placeholder.webp';
+                            }}
+                            className="w-full h-full object-cover object-center" 
+                          />
+                          <span className={`absolute top-2 right-2 px-2 py-0.5 rounded-md text-[10px] font-extrabold ${
+                            prod.isAvailable ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
+                          }`}>
+                            {prod.isAvailable ? 'Disponível' : 'Esgotado'}
+                          </span>
+                        </div>
+                        <h4 className="font-bold text-sm text-[#28242A]">{prod.name}</h4>
+                        <p className="text-xs text-[#726C74] line-clamp-2">{prod.description}</p>
                       </div>
-                      <span className="font-bold text-sm">{formatCurrency(m.amount)}</span>
+
+                      <div className="pt-2 border-t border-[#ECE8F0] flex items-center justify-between">
+                        <div>
+                          <span className="text-sm font-black text-[#49245B] font-['DM_Sans']">
+                            {formatCurrency(prod.promotionalPrice || prod.price)}
+                          </span>
+                          {prod.promotionalPrice && (
+                            <span className="text-[11px] text-gray-400 line-through ml-1.5">{formatCurrency(prod.price)}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => toggleProductAvailability(prod.id, !prod.isAvailable)}
+                            className={`p-1.5 rounded-lg border text-xs cursor-pointer ${
+                              prod.isAvailable ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'
+                            }`}
+                            title="Alternar disponibilidade"
+                          >
+                            {prod.isAvailable ? 'Ativo' : 'Pausado'}
+                          </button>
+                          <button
+                            onClick={() => {
+                              setEditingProduct(prod);
+                              setIsProductModalOpen(true);
+                            }}
+                            className="p-1.5 rounded-lg border border-[#ECE8F0] hover:bg-[#F3EDF6] text-[#69318A] cursor-pointer"
+                            title="Editar produto"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (confirm(`Deseja realmente remover o produto "${prod.name}"?`)) {
+                                deleteProduct(prod.id);
+                                setToastMessage({ text: 'Produto removido do cardápio!', type: 'success' });
+                              }
+                            }}
+                            className="p-1.5 rounded-lg border border-red-100 hover:bg-red-50 text-red-500 cursor-pointer"
+                            title="Excluir produto"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-aba 2: Categorias */}
+            {cardapioSubTab === 'categorias' && (
+              <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-[#28242A]">Categorias do Cardápio</h3>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newCategoryName}
+                      onChange={e => setNewCategoryName(e.target.value)}
+                      placeholder="Nome da nova categoria..."
+                      className="p-2 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs outline-none"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!newCategoryName.trim()) return alert('Informe o nome da categoria');
+                        alert(`Categoria "${newCategoryName}" adicionada com sucesso!`);
+                        setNewCategoryName('');
+                      }}
+                      className="px-3.5 py-2 bg-[#69318A] text-white rounded-xl text-xs font-bold"
+                    >
+                      Adicionar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {categories.map(c => (
+                    <div key={c.id} className="p-3.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl flex items-center justify-between text-xs">
+                      <div>
+                        <span className="font-bold text-[#28242A] block">{c.name}</span>
+                        <span className="text-[10px] text-[#726C74]">{c.description || 'Categoria de produtos'}</span>
+                      </div>
+                      <span className="px-2 py-0.5 bg-purple-100 text-[#69318A] rounded-md font-bold text-[10px]">
+                        Ativa
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-aba 3: Tamanhos & Preços */}
+            {cardapioSubTab === 'tamanhos' && (
+              <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+                <h3 className="text-sm font-bold text-[#28242A]">Tamanhos & Preços Padronizados</h3>
+                <p className="text-xs text-[#726C74]">Configuração de volumes padrão de açaí e seus valores base</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  {sizes.map(s => (
+                    <div key={s.id} className="p-4 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl space-y-2 text-xs">
+                      <span className="font-extrabold text-[#28242A] text-sm block">{s.name}</span>
+                      <p className="text-[11px] text-[#726C74]">{s.description || 'Copo padrão'}</p>
+                      <div className="flex items-center gap-2 pt-2 border-t border-[#ECE8F0]">
+                        <span className="text-[#726C74]">R$</span>
+                        <input
+                          type="number"
+                          step="0.50"
+                          defaultValue={s.price}
+                          onBlur={(e) => {
+                            const val = Number(e.target.value);
+                            updateSizePrice(s.id, val);
+                            setToastMessage({ text: `Preço de ${s.name} atualizado!`, type: 'success' });
+                          }}
+                          className="w-full p-1.5 bg-white border border-[#ECE8F0] rounded-lg font-bold text-[#69318A]"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-aba 4: Adicionais & Toppings */}
+            {cardapioSubTab === 'adicionais' && (
+              <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+                <h3 className="text-sm font-bold text-[#28242A]">Adicionais, Frutas & Coberturas</h3>
+                <p className="text-xs text-[#726C74]">Altere preços e limites de adicionais gratuitos e pagos</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {addons.map(a => (
+                    <div key={a.id} className="p-3.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl flex items-center justify-between text-xs">
+                      <div>
+                        <span className="font-bold text-[#28242A] block">{a.name}</span>
+                        <span className="text-[11px] text-[#726C74]">{a.category || 'Complemento'}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-[11px] text-[#726C74]">R$</span>
+                        <input
+                          type="number"
+                          step="0.50"
+                          defaultValue={a.price}
+                          onBlur={(e) => {
+                            const val = Number(e.target.value);
+                            updateAddonPrice(a.id, val);
+                            setToastMessage({ text: `Preço de ${a.name} atualizado!`, type: 'success' });
+                          }}
+                          className="w-16 p-1 bg-white border border-[#ECE8F0] rounded-lg font-bold text-[#69318A] text-right"
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-aba 5: Combos & Cupons */}
+            {cardapioSubTab === 'combos' && (
+              <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-[#28242A]">Cupons de Desconto & Promoções</h3>
+                  <button
+                    onClick={() => {
+                      const code = prompt('Código do novo cupom (ex: BEMVINDO10):');
+                      if (code) {
+                        setCoupons([...coupons, { id: String(Date.now()), code: code.toUpperCase(), discountType: 'fixed', discountValue: 5.00, minOrder: 30.00, isActive: true }]);
+                        setToastMessage({ text: `Cupom ${code} criado!`, type: 'success' });
+                      }
+                    }}
+                    className="px-3.5 py-2 bg-[#69318A] text-white rounded-xl text-xs font-bold"
+                  >
+                    + Criar Cupom
+                  </button>
+                </div>
+
+                <div className="divide-y divide-[#ECE8F0]">
+                  {coupons.map(cp => (
+                    <div key={cp.id} className="py-3 flex items-center justify-between text-xs">
+                      <div>
+                        <span className="font-extrabold text-[#69318A] font-mono text-sm block">{cp.code}</span>
+                        <span className="text-[#726C74]">Desconto: {cp.discountType === 'percentage' ? `${cp.discountValue}%` : formatCurrency(cp.discountValue)} • Mínimo: {formatCurrency(cp.minOrder)}</span>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setCoupons(coupons.map(c => c.id === cp.id ? { ...c, isActive: !c.isActive } : c));
+                        }}
+                        className={`px-3 py-1 rounded-lg font-bold cursor-pointer ${cp.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}
+                      >
+                        {cp.isActive ? 'Ativo' : 'Pausado'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Sub-aba 6: Estoque Rápido */}
+            {cardapioSubTab === 'estoque' && (
+              <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+                <div>
+                  <h3 className="text-sm font-bold text-[#28242A]">Operação Rápida de Estoque</h3>
+                  <p className="text-xs text-[#726C74]">Clique para pausar ou reativar itens instantaneamente durante o atendimento</p>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {products.map(prod => (
+                    <button
+                      key={prod.id}
+                      onClick={() => {
+                        toggleProductAvailability(prod.id, !prod.isAvailable);
+                        logAudit('Estoque Rápido', 'Produtos', `${prod.name} ${!prod.isAvailable ? 'ativado' : 'pausado'}`);
+                      }}
+                      className={`p-3.5 rounded-2xl border text-left flex flex-col justify-between h-24 transition-all cursor-pointer ${
+                        prod.isAvailable 
+                          ? 'border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50' 
+                          : 'border-red-200 bg-red-50 hover:bg-red-100'
+                      }`}
+                    >
+                      <span className="font-bold text-xs text-[#28242A] line-clamp-1">{prod.name}</span>
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md self-start ${
+                        prod.isAvailable ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
+                      }`}>
+                        {prod.isAvailable ? '✓ Disponível' : '✗ Esgotado'}
+                      </span>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -1557,508 +2357,250 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
           </div>
         )}
 
-        {/* 4. CARDÁPIO / PRODUTOS (CRUD COMPLETO) */}
-        {activeTab === 'produtos' && (
-          <div className="p-4 sm:p-8 space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <div>
-                <h3 className="text-base font-bold text-[#28242A]">Catálogo de Produtos</h3>
-                <p className="text-xs text-[#726C74]">Alterações de preços e produtos são sincronizadas imediatamente com todos os clientes</p>
-              </div>
-
-              <button
-                onClick={() => {
-                  setEditingProduct({
-                    id: `prod_${Date.now()}`,
-                    name: '',
-                    description: '',
-                    category: 'acai',
-                    price: 20.00,
-                    image: '/images/products/acai-tradicional.webp',
-                    isAvailable: true,
-                    allowsCustomization: true,
-                    maxFreeAdditionals: 3,
-                  });
-                  setIsProductModalOpen(true);
-                }}
-                className="px-4 py-2.5 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-xs"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Novo Produto</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {products.map(prod => (
-                <div key={prod.id} className="bg-white rounded-2xl border border-[#ECE8F0] overflow-hidden shadow-xs flex flex-col justify-between">
-                  <div>
-                    <div className="relative aspect-[4/3] bg-gray-100">
-                      <img 
-                        src={prod.image || '/images/products/product-placeholder.webp'} 
-                        alt={prod.name} 
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = '/images/products/product-placeholder.webp';
-                        }}
-                        className="w-full h-full object-cover" 
-                      />
-                      <span className={`absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-bold ${prod.isAvailable ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
-                        {prod.isAvailable ? 'Disponível' : 'Esgotado'}
-                      </span>
-                    </div>
-
-                    <div className="p-4 space-y-1">
-                      <h4 className="font-bold text-sm text-[#28242A]">{prod.name}</h4>
-                      <p className="text-xs text-[#726C74] line-clamp-2">{prod.description}</p>
-                      <div className="pt-2 flex items-baseline gap-2">
-                        <span className="text-base font-bold text-[#69318A]">{formatCurrency(prod.promotionalPrice || prod.price)}</span>
-                        {prod.promotionalPrice && <span className="text-xs text-[#726C74] line-through">{formatCurrency(prod.price)}</span>}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 pt-0 flex gap-2">
-                    <button
-                      onClick={() => {
-                        setEditingProduct(prod);
-                        setIsProductModalOpen(true);
-                      }}
-                      className="flex-1 py-2 bg-purple-50 hover:bg-purple-100 text-[#69318A] rounded-xl text-xs font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                      <span>Editar</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (confirm(`Deseja remover ${prod.name}?`)) {
-                          deleteProduct(prod.id);
-                          logAudit('Produto Removido', 'Produtos', `Produto ${prod.name} removido`);
-                        }
-                      }}
-                      className="p-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl transition-colors cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 5. CATEGORIAS */}
-        {activeTab === 'categorias' && (
-          <div className="p-4 sm:p-8 max-w-3xl space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <h3 className="text-base font-bold text-[#28242A]">Categorias do Cardápio</h3>
-              <p className="text-xs text-[#726C74]">Organização dos produtos exibidos na tela do cliente</p>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-[#ECE8F0] divide-y divide-[#ECE8F0]">
-              {categories.map(cat => (
-                <div key={cat.id} className="p-4 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-bold text-sm text-[#28242A] block">{cat.name}</span>
-                    <span className="text-[#726C74]">{cat.description}</span>
-                  </div>
-                  <span className="px-2.5 py-1 bg-[#F3EDF6] text-[#69318A] rounded-lg font-bold text-[11px]">
-                    Ativa
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 6. TAMANHOS & PREÇOS */}
-        {activeTab === 'tamanhos' && (
-          <div className="p-4 sm:p-8 max-w-3xl space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <h3 className="text-base font-bold text-[#28242A]">Tamanhos do Açaí</h3>
-              <p className="text-xs text-[#726C74]">Ajuste os valores base de cada tamanho comercializado</p>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-[#ECE8F0] divide-y divide-[#ECE8F0]">
-              {sizes.map(size => (
-                <div key={size.id} className="p-4 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-bold text-sm text-[#28242A] block">{size.name}</span>
-                    <span className="text-[#726C74]">{size.ml}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="font-bold text-[#69318A] text-sm">{formatCurrency(size.price)}</span>
-                    <button
-                      onClick={() => {
-                        const newPrice = prompt(`Novo preço para ${size.name}:`, String(size.price));
-                        if (newPrice && !isNaN(Number(newPrice))) {
-                          updateSizePrice(size.id, Number(newPrice));
-                          logAudit('Preço de Tamanho Alterado', 'Tamanhos', `${size.name} atualizado para R$ ${newPrice}`);
-                        }
-                      }}
-                      className="px-3 py-1.5 bg-purple-50 hover:bg-purple-100 text-[#69318A] rounded-lg font-bold cursor-pointer"
-                    >
-                      Alterar
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 7. ADICIONAIS & TOPPINGS */}
-        {activeTab === 'adicionais' && (
-          <div className="p-4 sm:p-8 space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <h3 className="text-base font-bold text-[#28242A]">Adicionais & Ingredientes</h3>
-              <p className="text-xs text-[#726C74]">Gerencie preços e disponibilidade de cada complemento</p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {addons.map(addon => (
-                <div key={addon.id} className="p-3.5 bg-white rounded-2xl border border-[#ECE8F0] shadow-xs flex justify-between items-center text-xs">
-                  <div>
-                    <span className="font-bold text-[#28242A] block">{addon.name}</span>
-                    <span className="text-[11px] text-[#726C74] uppercase">{addon.category}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-[#69318A]">{formatCurrency(addon.price)}</span>
-                    <button
-                      onClick={() => {
-                        const newPrice = prompt(`Novo preço para ${addon.name}:`, String(addon.price));
-                        if (newPrice && !isNaN(Number(newPrice))) {
-                          updateAddonPrice(addon.id, Number(newPrice));
-                          logAudit('Preço de Adicional Alterado', 'Adicionais', `${addon.name} para R$ ${newPrice}`);
-                        }
-                      }}
-                      className="p-1.5 text-[#726C74] hover:text-[#69318A] hover:bg-[#F3EDF6] rounded-lg cursor-pointer"
-                    >
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 8. PROMOÇÕES & CUPONS */}
-        {activeTab === 'promocoes' && (
-          <div className="p-4 sm:p-8 max-w-3xl space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex justify-between items-center">
-              <div>
-                <h3 className="text-base font-bold text-[#28242A]">Cupons de Desconto</h3>
-                <p className="text-xs text-[#726C74]">Crie códigos promocionais para seus clientes</p>
-              </div>
-              <button
-                onClick={() => {
-                  const code = prompt('Código do cupom (Ex: PROMO10):');
-                  const val = prompt('Valor do desconto (R$ ou %):', '5');
-                  if (code && val) {
-                    setCoupons([...coupons, { id: String(Date.now()), code: code.toUpperCase(), discountType: 'fixed', discountValue: Number(val), minOrder: 30.00, isActive: true }]);
-                    logAudit('Cupom Criado', 'Promoções', `Cupom ${code.toUpperCase()} criado`);
-                  }
-                }}
-                className="px-3.5 py-2 bg-[#69318A] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
-              >
-                <PlusCircle className="w-4 h-4" />
-                <span>Novo Cupom</span>
-              </button>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-[#ECE8F0] divide-y divide-[#ECE8F0]">
-              {coupons.map(coupon => (
-                <div key={coupon.id} className="p-4 flex items-center justify-between text-xs">
-                  <div>
-                    <span className="font-extrabold text-[#69318A] text-sm tracking-wider font-mono block">{coupon.code}</span>
-                    <span className="text-[#726C74]">Desconto: {coupon.discountType === 'percentage' ? `${coupon.discountValue}%` : formatCurrency(coupon.discountValue)} • Mínimo: {formatCurrency(coupon.minOrder)}</span>
-                  </div>
-                  <button
-                    onClick={() => {
-                      setCoupons(coupons.map(c => c.id === coupon.id ? { ...c, isActive: !c.isActive } : c));
-                    }}
-                    className={`px-3 py-1 rounded-lg font-bold cursor-pointer ${coupon.isActive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}
-                  >
-                    {coupon.isActive ? 'Ativo' : 'Inativo'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 9. ESTOQUE & OPERAÇÃO RÁPIDA */}
-        {activeTab === 'estoque' && (
-          <div className="p-4 sm:p-8 space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <h3 className="text-base font-bold text-[#28242A]">Operação Rápida de Estoque</h3>
-              <p className="text-xs text-[#726C74]">Clique para pausar ou reativar itens instantaneamente durante o atendimento</p>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-              {products.map(prod => (
-                <button
-                  key={prod.id}
-                  onClick={() => {
-                    toggleProductAvailability(prod.id, !prod.isAvailable);
-                    logAudit('Operação Rápida', 'Estoque', `${prod.name} ${!prod.isAvailable ? 'ativado' : 'pausado'}`);
-                  }}
-                  className={`p-3.5 rounded-2xl border text-left flex flex-col justify-between h-28 transition-all cursor-pointer ${
-                    prod.isAvailable 
-                      ? 'border-emerald-200 bg-emerald-50/50 hover:bg-emerald-50' 
-                      : 'border-red-200 bg-red-50 hover:bg-red-100'
-                  }`}
-                >
-                  <span className="font-bold text-xs text-[#28242A] line-clamp-2">{prod.name}</span>
-                  <span className={`text-[11px] font-extrabold px-2 py-0.5 rounded-md self-start ${
-                    prod.isAvailable ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
-                  }`}>
-                    {prod.isAvailable ? '✓ Disponível' : '✗ Esgotado'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 10. ENTREGAS & BAIRROS */}
-        {activeTab === 'entregas' && (
-          <div className="p-4 sm:p-8 max-w-3xl space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
-              <h3 className="text-base font-bold text-[#28242A]">Configuração de Frete Geral</h3>
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div>
-                  <label className="block text-[#726C74] font-bold mb-1">Taxa Padrão (R$)</label>
-                  <input
-                    type="number"
-                    step="0.50"
-                    value={storeSettings.defaultDeliveryFee}
-                    onChange={(e) => updateStoreSettings({ defaultDeliveryFee: Number(e.target.value) })}
-                    className="w-full p-2 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[#726C74] font-bold mb-1">Frete Grátis a partir de (R$)</label>
-                  <input
-                    type="number"
-                    step="1.00"
-                    value={storeSettings.freeDeliveryThreshold}
-                    onChange={(e) => updateStoreSettings({ freeDeliveryThreshold: Number(e.target.value) })}
-                    className="w-full p-2 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-3">
-              <h3 className="text-base font-bold text-[#28242A]">Bairros Atendidos</h3>
-              <div className="divide-y divide-[#ECE8F0]">
-                {deliveryZones.map(zone => (
-                  <div key={zone.id} className="py-3 flex items-center justify-between text-xs">
-                    <div>
-                      <span className="font-bold text-[#28242A] text-sm block">{zone.neighborhood}</span>
-                      <span className="text-[#726C74]">Tempo: {zone.estimatedTime} • Mínimo: {formatCurrency(zone.minOrder)}</span>
-                    </div>
-                    <span className="font-bold text-[#69318A] text-sm">{formatCurrency(zone.fee)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 11. BASE DE CLIENTES */}
+        {/* 5. CLIENTES & CRM */}
         {activeTab === 'clientes' && (
           <div className="p-4 sm:p-8 space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <h3 className="text-base font-bold text-[#28242A]">Base de Clientes</h3>
-              <p className="text-xs text-[#726C74]">Clientes cadastrados automaticamente pelos pedidos realizados no site</p>
+            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-bold text-[#28242A]">Base de Clientes & CRM</h3>
+                  <p className="text-xs text-[#726C74]">Consulte o histórico de pedidos, frequência e valor acumulado de cada cliente</p>
+                </div>
+                <div className="relative min-w-[240px]">
+                  <Search className="w-4 h-4 text-[#726C74] absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    value={customerSearchQuery}
+                    onChange={e => setCustomerSearchQuery(e.target.value)}
+                    placeholder="Buscar cliente por nome ou telefone..."
+                    className="w-full pl-9 pr-3 py-2 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs outline-none"
+                  />
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead>
+                    <tr className="border-b border-[#ECE8F0] text-[#726C74] font-bold">
+                      <th className="pb-3">Cliente</th>
+                      <th className="pb-3">Telefone</th>
+                      <th className="pb-3">Endereço Principal</th>
+                      <th className="pb-3">Total de Pedidos</th>
+                      <th className="pb-3">Total Gasto</th>
+                      <th className="pb-3">Último Pedido</th>
+                      <th className="pb-3 text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#ECE8F0]">
+                    {filteredCustomers.map((cust, idx) => (
+                      <tr key={idx} className="hover:bg-[#FCFAF7] transition-colors">
+                        <td className="py-3 font-bold text-[#28242A]">{cust.name}</td>
+                        <td className="py-3 text-[#726C74]">
+                          {cust.phone !== 'Não informado' ? (
+                            <a 
+                              href={`https://wa.me/55${cust.phone.replace(/\D/g, '')}`} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="text-[#69318A] hover:underline font-semibold"
+                            >
+                              📞 {cust.phone}
+                            </a>
+                          ) : 'Não informado'}
+                        </td>
+                        <td className="py-3 text-[#726C74] max-w-[200px] truncate">{cust.address}</td>
+                        <td className="py-3 font-bold text-[#28242A]">{cust.count}</td>
+                        <td className="py-3 font-black text-[#49245B] font-['DM_Sans']">{formatCurrency(cust.totalSpent)}</td>
+                        <td className="py-3 text-[#726C74]">{new Date(cust.lastOrder).toLocaleDateString('pt-BR')}</td>
+                        <td className="py-3 text-right">
+                          <button
+                            onClick={() => setSelectedCustomerHistory(cust)}
+                            className="px-3 py-1 bg-purple-50 text-[#69318A] rounded-lg font-bold hover:bg-purple-100 cursor-pointer"
+                          >
+                            Ver Histórico
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-[#ECE8F0] overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#FCFAF7] border-b border-[#ECE8F0] text-[#726C74] uppercase text-[10px]">
-                  <tr>
-                    <th className="p-3.5">Cliente</th>
-                    <th className="p-3.5">Telefone</th>
-                    <th className="p-3.5 text-center">Total Pedidos</th>
-                    <th className="p-3.5 text-right">Total Comprado</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#ECE8F0]">
-                  {customersList.map((c, idx) => (
-                    <tr key={idx} className="hover:bg-[#F3EDF6]/30">
-                      <td className="p-3.5 font-bold text-[#28242A]">{c.name}</td>
-                      <td className="p-3.5 text-[#726C74]">{c.phone}</td>
-                      <td className="p-3.5 text-center font-bold">{c.count}</td>
-                      <td className="p-3.5 text-right font-extrabold text-[#69318A]">{formatCurrency(c.totalSpent)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            {/* MODAL DE HISTÓRICO DE COMPRAS DO CLIENTE */}
+            {selectedCustomerHistory && (
+              <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+                <div className="bg-white w-full max-w-2xl rounded-3xl p-6 space-y-4 shadow-2xl border border-[#ECE8F0] max-h-[90vh] overflow-y-auto">
+                  <div className="flex justify-between items-center pb-2 border-b border-[#ECE8F0]">
+                    <div>
+                      <h3 className="text-base font-bold text-[#28242A]">Histórico de {selectedCustomerHistory.name}</h3>
+                      <p className="text-xs text-[#726C74]">📞 {selectedCustomerHistory.phone}</p>
+                    </div>
+                    <button onClick={() => setSelectedCustomerHistory(null)} className="p-1 text-[#726C74]">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {selectedCustomerHistory.orders.map(o => (
+                      <div key={o.order_number} className="p-3.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl text-xs space-y-2">
+                        <div className="flex justify-between items-center font-bold">
+                          <span className="text-[#69318A]">Pedido #{o.order_number}</span>
+                          <span className="text-[#28242A]">{new Date(o.created_at).toLocaleString('pt-BR')}</span>
+                          <span className="font-black text-[#49245B]">{formatCurrency(o.total)}</span>
+                        </div>
+                        <div className="text-[#726C74]">
+                          {(o.items || []).map((it, i) => (
+                            <div key={i}>• {it.quantity}x {it.name} {it.size ? `(${it.size})` : ''}</div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* 12. RELATÓRIOS & VENDAS */}
+        {/* 6. ENTREGADORES & MAPA GPS */}
+        {activeTab === 'entregadores' && (
+          <div className="p-4 sm:p-8 space-y-6">
+            <AdminLiveDeliveries />
+          </div>
+        )}
+
+        {/* 7. RELATÓRIOS GERENCIAIS */}
         {activeTab === 'relatorios' && (
           <div className="p-4 sm:p-8 space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs flex flex-wrap justify-between items-center gap-4">
-              <div>
-                <h3 className="text-base font-bold text-[#28242A]">Relatório de Vendas</h3>
-                <p className="text-xs text-[#726C74]">Consolidado operacional e financeiro permanente</p>
-              </div>
-
-              <div className="flex items-center gap-2">
+            <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-bold text-[#28242A]">Relatórios Gerenciais de Vendas</h3>
+                  <p className="text-xs text-[#726C74]">Consolidação de dados operacionais e financeiros para exportação</p>
+                </div>
                 <button
                   onClick={handleExportCSV}
-                  className="px-4 py-2.5 bg-[#69318A] hover:bg-[#572185] text-white rounded-xl text-xs font-bold flex items-center gap-2 cursor-pointer shadow-xs"
+                  className="px-4 py-2.5 bg-[#69318A] text-white rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-[#572185] cursor-pointer shadow-xs"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Exportar CSV</span>
+                  <span>Baixar Relatório Completo (CSV)</span>
                 </button>
               </div>
-            </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
-                <h4 className="text-xs font-bold text-[#726C74] uppercase">Histórico Total Registrado</h4>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between"><span>Total de Pedidos no Banco:</span><span className="font-bold">{orders.length}</span></div>
-                  <div className="flex justify-between"><span>Pedidos Concluídos:</span><span className="font-bold text-emerald-600">{orders.filter(o => o.status === 'done').length}</span></div>
-                  <div className="flex justify-between"><span>Pedidos Cancelados:</span><span className="font-bold text-red-600">{orders.filter(o => o.status === 'cancelled').length}</span></div>
-                  <div className="flex justify-between border-t border-[#ECE8F0] pt-2 text-sm">
-                    <span className="font-bold">Receita Total Realizada:</span>
-                    <span className="font-extrabold text-[#49245B]">
-                      {formatCurrency(orders.filter(o => o.status === 'done').reduce((s, o) => s + Number(o.total || 0), 0))}
-                    </span>
-                  </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                <div className="p-4 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl text-xs space-y-1">
+                  <span className="text-[#726C74] font-bold">Total de Pedidos no Sistema</span>
+                  <span className="text-2xl font-black text-[#28242A] block">{orders.length}</span>
                 </div>
-              </div>
-
-              <div className="bg-white p-5 rounded-2xl border border-[#ECE8F0] shadow-xs space-y-3">
-                <h4 className="text-xs font-bold text-[#726C74] uppercase">Hoje ({todaySP})</h4>
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between"><span>Pedidos Realizados Hoje:</span><span className="font-bold">{todayOrders.length}</span></div>
-                  <div className="flex justify-between"><span>Entregues/Retirados Hoje:</span><span className="font-bold text-emerald-600">{pedidosConcluidosHoje}</span></div>
-                  <div className="flex justify-between"><span>Cancelados Hoje:</span><span className="font-bold text-red-600">{pedidosCanceladosHoje}</span></div>
-                  <div className="flex justify-between border-t border-[#ECE8F0] pt-2 text-sm">
-                    <span className="font-bold">Faturamento Realizado Hoje:</span>
-                    <span className="font-extrabold text-emerald-600">{formatCurrency(faturamentoRealizadoHoje)}</span>
-                  </div>
+                <div className="p-4 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl text-xs space-y-1">
+                  <span className="text-[#726C74] font-bold">Total de Vendas Concluídas</span>
+                  <span className="text-2xl font-black text-emerald-700 block">{countDone}</span>
+                </div>
+                <div className="p-4 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl text-xs space-y-1">
+                  <span className="text-[#726C74] font-bold">Total Faturado Histórico</span>
+                  <span className="text-2xl font-black text-[#49245B] block font-['DM_Sans']">
+                    {formatCurrency(orders.filter(o => o.status === 'done').reduce((s, o) => s + Number(o.total || 0), 0))}
+                  </span>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* 13. CONFIGURAÇÕES DA LOJA */}
+        {/* 8. CONFIGURAÇÕES DA LOJA */}
         {activeTab === 'configuracoes' && (
-          <div className="p-4 sm:p-8 max-w-2xl space-y-6">
-            <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-4 text-xs">
-              <h3 className="text-base font-bold text-[#28242A] border-b border-[#ECE8F0] pb-3">Informações da Loja</h3>
-              
-              <div>
-                <label className="block text-[#726C74] font-bold mb-1">Nome do Estabelecimento</label>
-                <input
-                  type="text"
-                  value={storeSettings.storeName}
-                  onChange={(e) => updateStoreSettings({ storeName: e.target.value })}
-                  className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none font-bold"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[#726C74] font-bold mb-1">Telefone / Fixo</label>
-                  <input
-                    type="text"
-                    value={storeSettings.phone}
-                    onChange={(e) => updateStoreSettings({ phone: e.target.value })}
-                    className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[#726C74] font-bold mb-1">WhatsApp para Atendimento</label>
-                  <input
-                    type="text"
-                    value={storeSettings.whatsappNumber}
-                    onChange={(e) => updateStoreSettings({ whatsappNumber: e.target.value })}
-                    className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[#726C74] font-bold mb-1">Tempo Estimado de Entrega</label>
-                <input
-                  type="text"
-                  value={storeSettings.estimatedDeliveryTime}
-                  onChange={(e) => updateStoreSettings({ estimatedDeliveryTime: e.target.value })}
-                  className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
-                />
-              </div>
-
-              <button
-                onClick={() => {
-                  alert('Configurações salvas e propagadas com sucesso!');
-                  logAudit('Configurações Atualizadas', 'Loja', 'Dados cadastrais da loja atualizados');
-                }}
-                className="w-full py-3 bg-[#69318A] hover:bg-[#572185] text-white font-bold rounded-xl cursor-pointer shadow-xs"
-              >
-                Salvar Alterações
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* 14. USUÁRIOS & PERMISSÕES */}
-        {activeTab === 'usuarios' && (
-          <div className="p-4 sm:p-8 max-w-3xl space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <h3 className="text-base font-bold text-[#28242A]">Perfis de Acesso & Equipe</h3>
-              <p className="text-xs text-[#726C74]">Níveis de permissão operacional da loja</p>
-            </div>
-
-            <div className="bg-white rounded-2xl border border-[#ECE8F0] divide-y divide-[#ECE8F0] text-xs">
-              {[
-                { name: 'Administrador Principal', email: 'admin@acaipuro.com.br', role: 'Administrador Geral', badge: 'bg-purple-100 text-[#69318A]' },
-                { name: 'Gerente Operacional', email: 'gerente@acaipuro.com.br', role: 'Gerente', badge: 'bg-blue-100 text-blue-800' },
-                { name: 'Terminal Cozinha', email: 'cozinha@acaipuro.com.br', role: 'Cozinha', badge: 'bg-amber-100 text-amber-800' },
-                { name: 'Entregador Chefe', email: 'entregas@acaipuro.com.br', role: 'Entregador', badge: 'bg-indigo-100 text-indigo-800' },
-              ].map((user, idx) => (
-                <div key={idx} className="p-4 flex items-center justify-between">
-                  <div>
-                    <span className="font-bold text-[#28242A] text-sm block">{user.name}</span>
-                    <span className="text-[#726C74]">{user.email}</span>
-                  </div>
-                  <span className={`px-3 py-1 rounded-xl font-bold ${user.badge}`}>{user.role}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 15. HISTÓRICO DE AUDITORIA */}
-        {activeTab === 'auditoria' && (
           <div className="p-4 sm:p-8 space-y-6">
-            <div className="bg-white p-5 rounded-3xl border border-[#ECE8F0] shadow-xs">
-              <h3 className="text-base font-bold text-[#28242A]">Histórico de Auditoria</h3>
-              <p className="text-xs text-[#726C74]">Registro imutável de todas as ações administrativas realizadas no painel</p>
-            </div>
+            <div className="bg-white p-6 rounded-3xl border border-[#ECE8F0] shadow-xs space-y-6">
+              <div>
+                <h3 className="text-base font-bold text-[#28242A]">Configurações Gerais da Loja</h3>
+                <p className="text-xs text-[#726C74]">Horários, taxas, prazos médios e integração do WhatsApp</p>
+              </div>
 
-            <div className="bg-white rounded-2xl border border-[#ECE8F0] divide-y divide-[#ECE8F0] text-xs">
-              {auditLogs.map(log => (
-                <div key={log.id} className="p-4 flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-[#28242A]">{log.action}</span>
-                      <span className="px-2 py-0.5 bg-[#F3EDF6] text-[#69318A] rounded-md text-[10px] font-bold">{log.entity}</span>
-                    </div>
-                    <p className="text-[#726C74]">{log.details}</p>
-                  </div>
-                  <span className="text-[#726C74] font-mono text-[11px]">{log.timestamp}</span>
+              {/* Informações da Loja */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                <div>
+                  <label className="block text-[#726C74] font-bold mb-1">Nome da Loja</label>
+                  <input
+                    type="text"
+                    defaultValue={storeSettings.storeName}
+                    onBlur={(e) => updateStoreSettings({ storeName: e.target.value })}
+                    className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs"
+                  />
                 </div>
-              ))}
+                <div>
+                  <label className="block text-[#726C74] font-bold mb-1">WhatsApp de Atendimento</label>
+                  <input
+                    type="text"
+                    defaultValue={storeSettings.phone}
+                    onBlur={(e) => updateStoreSettings({ phone: e.target.value })}
+                    placeholder="(13) 99150-9733"
+                    className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[#726C74] font-bold mb-1">Tempo Médio de Preparo</label>
+                  <input
+                    type="text"
+                    defaultValue={storeSettings.estimatedPrepTime || '20-30 min'}
+                    onBlur={(e) => updateStoreSettings({ estimatedPrepTime: e.target.value })}
+                    className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[#726C74] font-bold mb-1">Tempo Médio de Entrega</label>
+                  <input
+                    type="text"
+                    defaultValue={storeSettings.estimatedDeliveryTime || '30-45 min'}
+                    onBlur={(e) => updateStoreSettings({ estimatedDeliveryTime: e.target.value })}
+                    className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl text-xs"
+                  />
+                </div>
+              </div>
+
+              {/* Guia de Integração WhatsApp Cloud API */}
+              <div className="p-4 bg-purple-50 rounded-2xl border border-purple-100 text-xs space-y-3">
+                <div className="flex items-center gap-2 font-bold text-[#69318A]">
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Integração Oficial de WhatsApp (Meta Cloud API)</span>
+                </div>
+                <p className="text-[#726C74]">
+                  O sistema dispara automaticamente as mensagens nos status: <strong>Confirmado (Em Preparo)</strong>, <strong>Saiu para entrega</strong>, <strong>Pronto para retirada</strong> e <strong>Cancelado</strong>.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  <div>
+                    <label className="block text-[#28242A] font-bold mb-1">WHATSAPP_PHONE_NUMBER_ID (Meta)</label>
+                    <input
+                      type="text"
+                      placeholder="Ex: 109283746501928"
+                      value={whatsappPhoneIdInput}
+                      onChange={e => setWhatsappPhoneIdInput(e.target.value)}
+                      className="w-full p-2 bg-white border border-[#ECE8F0] rounded-xl text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[#28242A] font-bold mb-1">WHATSAPP_API_TOKEN (Meta Token)</label>
+                    <input
+                      type="password"
+                      placeholder="EAABwzLIXyZB... (Token de Acesso Permanente)"
+                      value={whatsappTokenInput}
+                      onChange={e => setWhatsappTokenInput(e.target.value)}
+                      className="w-full p-2 bg-white border border-[#ECE8F0] rounded-xl text-xs"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#69318A]">
+                  Para configurar no servidor Vercel / Produção: adicione as variáveis de ambiente <code className="bg-white px-1 py-0.5 rounded font-mono">WHATSAPP_API_TOKEN</code> e <code className="bg-white px-1 py-0.5 rounded font-mono">WHATSAPP_PHONE_NUMBER_ID</code>.
+                </p>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={() => setToastMessage({ text: 'Configurações da loja salvas!', type: 'success' })}
+                  className="px-6 py-2.5 bg-[#69318A] text-white rounded-xl text-xs font-bold hover:bg-[#572185] shadow-xs cursor-pointer"
+                >
+                  Salvar Configurações
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -2088,12 +2630,30 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                 placeholder="Ex: Item esgotado, endereço fora do raio de entrega, cliente solicitou..."
                 className="w-full p-2.5 bg-[#FCFAF7] border border-[#ECE8F0] rounded-xl outline-none"
               />
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {[
+                  'Item ou insumo esgotado',
+                  'Endereço fora do raio de entrega',
+                  'Cliente solicitou cancelamento',
+                  'Problema no pagamento / Pix não identificado',
+                  'Pedido duplicado'
+                ].map((preset, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => setCancellationReason(preset)}
+                    className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-[10px] font-semibold transition-colors"
+                  >
+                    + {preset}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => setCancellingOrderId(null)}
-                className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-[#28242A] text-xs font-bold rounded-xl"
+                className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-[#28242A] text-xs font-bold rounded-xl cursor-pointer"
               >
                 Voltar
               </button>
@@ -2103,7 +2663,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                   handleUpdateStatus(cancellingOrderId, 'cancelled', cancellationReason.trim());
                   setCancellingOrderId(null);
                 }}
-                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl shadow-xs"
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl shadow-xs cursor-pointer"
               >
                 Confirmar Cancelamento
               </button>

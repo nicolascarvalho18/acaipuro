@@ -1,4 +1,14 @@
 import { createClient } from '@supabase/supabase-js';
+import {
+  softDeleteOrderDb,
+  restoreOrderDb,
+  hardDeleteOrderDb,
+  archiveOrderDb,
+  updateInternalNotesDb,
+  updateOrderStatusDb,
+  listAllOrders,
+  getOrder
+} from '../_services/db';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function isUUID(str?: string): boolean {
@@ -78,7 +88,7 @@ export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
@@ -91,7 +101,7 @@ export default async function handler(req: any, res: any) {
   const supabase = getSupabaseClient();
   const now = new Date().toISOString();
 
-  // GET: Consulta de Entregadores, Corridas e Localização
+  // GET: Handlers
   if (req.method === 'GET') {
     const type = req.query?.type;
 
@@ -175,7 +185,8 @@ export default async function handler(req: any, res: any) {
       return res.status(200).json({ success: true, location: null });
     }
 
-    return res.status(200).json({ success: true, message: 'Manage endpoint active' });
+    const orders = await listAllOrders({ includeArchived: true, includeDeleted: true });
+    return res.status(200).json({ success: true, orders });
   }
 
   if (req.method !== 'POST') {
@@ -190,7 +201,7 @@ export default async function handler(req: any, res: any) {
       } catch {}
     }
 
-    const { action, orderId, adminEmail = 'admin@acaipuro.com.br', notes } = body || {};
+    const { action, orderId, reason, adminEmail = 'admin@acaipuro.com.br', notes } = body || {};
 
     // 1. Driver Login
     if (action === 'driver_login' || action === 'login') {
@@ -310,13 +321,13 @@ export default async function handler(req: any, res: any) {
     }
 
     // 5. Update Delivery Status
-    if (action === 'update_delivery_status' || action === 'update_status') {
-      const { assignmentId, orderNumber, driverId, status, reason } = body;
+    if (action === 'update_delivery_status') {
+      const { assignmentId, orderNumber, driverId, status, reason: cancelReason } = body;
       const updatePayload: any = { status, updated_at: now };
       if (status === 'picked_up') updatePayload.picked_up_at = now;
       if (status === 'in_transit') updatePayload.started_delivery_at = now;
       if (status === 'delivered') updatePayload.delivered_at = now;
-      if (status === 'cancelled' || status === 'problem') updatePayload.cancellation_reason = reason;
+      if (status === 'cancelled' || status === 'problem') updatePayload.cancellation_reason = cancelReason;
 
       if (supabase) {
         try {
@@ -325,12 +336,14 @@ export default async function handler(req: any, res: any) {
           else q = q.eq('order_number', orderNumber);
           const { data } = await q.select('*, driver:delivery_drivers(*)').maybeSingle();
 
-          if (status === 'picked_up' || status === 'in_transit') {
-            await supabase.from('orders').update({ status: 'delivering', updated_at: now }).eq('order_number', orderNumber);
-          } else if (status === 'delivered') {
-            await supabase.from('orders').update({ status: 'done', completed_at: now, updated_at: now }).eq('order_number', orderNumber);
-            if (driverId) {
-              await supabase.from('delivery_drivers').update({ availability_status: 'available', updated_at: now }).eq('id', driverId);
+          if (orderNumber) {
+            if (status === 'picked_up' || status === 'in_transit') {
+              await updateOrderStatusDb(orderNumber, 'delivering', cancelReason, 'driver');
+            } else if (status === 'delivered') {
+              await updateOrderStatusDb(orderNumber, 'done', cancelReason, 'driver');
+              if (driverId) {
+                await supabase.from('delivery_drivers').update({ availability_status: 'available', updated_at: now }).eq('id', driverId);
+              }
             }
           }
           return res.status(200).json({ success: true, assignment: data });
@@ -370,82 +383,35 @@ export default async function handler(req: any, res: any) {
       return res.status(400).json({ error: 'action e orderId são obrigatórios' });
     }
 
-    const isIdUuid = isUUID(orderId);
-    if (!supabase) {
-      return res.status(200).json({ success: true, action, orderId });
-    }
-
-    const applyOrderFilter = (query: any) => {
-      return isIdUuid ? query.eq('id', orderId) : query.eq('order_number', orderId);
-    };
-
+    // Order Management Actions
     if (action === 'archive') {
-      await applyOrderFilter(supabase.from('orders').update({ is_archived: true, updated_at: now }));
-      try {
-        await supabase.from('audit_logs').insert({
-          user_email: adminEmail,
-          action: 'Arquivamento de Pedido',
-          entity: 'orders',
-          entity_id: orderId,
-          details: { action: 'archive' },
-        });
-      } catch {}
-      return res.status(200).json({ success: true, message: 'Pedido arquivado com sucesso' });
+      const ok = await archiveOrderDb(orderId, true, adminEmail);
+      return res.status(200).json({ success: ok, message: 'Pedido arquivado com sucesso' });
     }
 
     if (action === 'unarchive') {
-      await applyOrderFilter(supabase.from('orders').update({ is_archived: false, updated_at: now }));
-      return res.status(200).json({ success: true, message: 'Pedido desarquivado com sucesso' });
+      const ok = await archiveOrderDb(orderId, false, adminEmail);
+      return res.status(200).json({ success: ok, message: 'Pedido desarquivado com sucesso' });
     }
 
     if (action === 'delete') {
-      await applyOrderFilter(
-        supabase.from('orders').update({
-          deleted_at: now,
-          deleted_by: adminEmail,
-          updated_at: now,
-        })
-      );
-      try {
-        await supabase.from('audit_logs').insert({
-          user_email: adminEmail,
-          action: 'Exclusão Lógica de Pedido',
-          entity: 'orders',
-          entity_id: orderId,
-          details: { action: 'soft_delete', deleted_by: adminEmail },
-        });
-      } catch {}
-      return res.status(200).json({ success: true, message: 'Pedido excluído logicamente' });
+      const ok = await softDeleteOrderDb(orderId, reason || 'Exclusão solicitada pelo administrador', adminEmail);
+      return res.status(200).json({ success: ok, message: 'Pedido excluído logicamente' });
     }
 
     if (action === 'restore') {
-      await applyOrderFilter(
-        supabase.from('orders').update({
-          deleted_at: null,
-          deleted_by: null,
-          updated_at: now,
-        })
-      );
-      try {
-        await supabase.from('audit_logs').insert({
-          user_email: adminEmail,
-          action: 'Restauração de Pedido Excluído',
-          entity: 'orders',
-          entity_id: orderId,
-          details: { action: 'restore' },
-        });
-      } catch {}
-      return res.status(200).json({ success: true, message: 'Pedido restaurado com sucesso' });
+      const ok = await restoreOrderDb(orderId, adminEmail);
+      return res.status(200).json({ success: ok, message: 'Pedido restaurado com sucesso' });
+    }
+
+    if (action === 'hard_delete') {
+      const ok = await hardDeleteOrderDb(orderId, adminEmail);
+      return res.status(200).json({ success: ok, message: 'Pedido excluído definitivamente' });
     }
 
     if (action === 'update_notes') {
-      await applyOrderFilter(
-        supabase.from('orders').update({
-          internal_notes: notes || null,
-          updated_at: now,
-        })
-      );
-      return res.status(200).json({ success: true, message: 'Observações internas salvas' });
+      const ok = await updateInternalNotesDb(orderId, notes);
+      return res.status(200).json({ success: ok, message: 'Observações internas salvas' });
     }
 
     return res.status(400).json({ error: 'Ação não reconhecida' });

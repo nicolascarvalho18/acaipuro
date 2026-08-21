@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { getStoreSettings, updateStoreSettings } from './_services/db';
 
 // Catálogo padrão de inicialização com fotografias reais padronizadas
 const DEFAULT_PRODUCTS = [
@@ -251,39 +252,26 @@ export default async function handler(req: any, res: any) {
               displayOrder: p.sort_order || 1,
             }));
           }
-
-          if (!sRes.error && sRes.data) {
-            globalStoreSettings = {
-              storeName: sRes.data.store_name || globalStoreSettings.storeName,
-              phone: sRes.data.phone || globalStoreSettings.phone,
-              whatsappNumber: sRes.data.whatsapp_number || globalStoreSettings.whatsappNumber,
-              address: sRes.data.address || globalStoreSettings.address,
-              openingHoursText: sRes.data.opening_hours_text || globalStoreSettings.openingHoursText,
-              isOpen: sRes.data.is_open ?? true,
-              pausedUntil: sRes.data.paused_until || null,
-              defaultDeliveryFee: Number(sRes.data.default_delivery_fee) || 5.00,
-              freeDeliveryThreshold: Number(sRes.data.free_delivery_threshold) || 45.00,
-              minOrderValue: Number(sRes.data.min_order_value) || 15.00,
-              estimatedDeliveryTime: sRes.data.estimated_delivery_time || '30 a 45 minutos',
-            };
-          }
         } catch (dbErr) {
           console.warn('[Catalog Supabase error]:', dbErr);
         }
       }
 
+      const currentStoreSettings = await getStoreSettings();
+
       return res.status(200).json({
         success: true,
         products: globalProducts,
-        storeSettings: globalStoreSettings,
+        storeSettings: currentStoreSettings,
         sizes: globalSizes,
         addons: globalAddons,
       });
     } catch {
+      const currentStoreSettings = await getStoreSettings();
       return res.status(200).json({
         success: true,
         products: globalProducts,
-        storeSettings: globalStoreSettings,
+        storeSettings: currentStoreSettings,
         sizes: globalSizes,
         addons: globalAddons,
       });
@@ -347,26 +335,8 @@ export default async function handler(req: any, res: any) {
       }
 
       if (action === 'update_store_settings' && payload) {
-        globalStoreSettings = { ...globalStoreSettings, ...payload };
-        if (supabase) {
-          try {
-            await supabase.from('store_settings').upsert({
-              id: 'default',
-              store_name: globalStoreSettings.storeName,
-              phone: globalStoreSettings.phone,
-              whatsapp_number: globalStoreSettings.whatsappNumber,
-              address: globalStoreSettings.address,
-              opening_hours_text: globalStoreSettings.openingHoursText,
-              is_open: globalStoreSettings.isOpen,
-              paused_until: globalStoreSettings.pausedUntil,
-              default_delivery_fee: globalStoreSettings.defaultDeliveryFee,
-              free_delivery_threshold: globalStoreSettings.freeDeliveryThreshold,
-              estimated_delivery_time: globalStoreSettings.estimatedDeliveryTime,
-              updated_at: new Date().toISOString(),
-            });
-          } catch {}
-        }
-        return res.status(200).json({ success: true, storeSettings: globalStoreSettings });
+        const updated = await updateStoreSettings(payload);
+        return res.status(200).json({ success: true, storeSettings: updated });
       }
 
       if (action === 'update_size' && payload) {

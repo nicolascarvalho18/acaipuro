@@ -98,13 +98,19 @@ export const CheckoutModal: React.FC = () => {
   const handleFinishOrder = async () => {
     if (!validateForm()) return;
 
+    if (!isOpen) {
+      setErrorMessage('A loja está fechada no momento e não está recebendo pedidos.');
+      return;
+    }
+
     setIsSubmitting(true);
     setErrorMessage(null);
 
-    const orderNumber = `PED-${Math.floor(1000 + Math.random() * 9000)}`;
+    const idempotencyKey = `idemp_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
     const orderPayload = {
-      orderNumber,
+      idempotencyKey,
+      clientOrderId: idempotencyKey,
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim(),
       fulfillmentType: deliveryType,
@@ -130,9 +136,6 @@ export const CheckoutModal: React.FC = () => {
       total,
     };
 
-    let orderSavedSuccessfully = false;
-    let finalOrderNumber = orderNumber;
-
     try {
       const res = await fetch('/api/orders', {
         method: 'POST',
@@ -148,68 +151,50 @@ export const CheckoutModal: React.FC = () => {
         console.warn('API returned non-JSON response:', rawText);
       }
 
-        if (res.ok && data && data.success) {
-          orderSavedSuccessfully = true;
-          finalOrderNumber = data.orderNumber || orderNumber;
-          if (data.accessToken) {
-            openOrderTracking(finalOrderNumber, data.accessToken);
-          }
-        } else if (data && data.code === 'STORE_CLOSED') {
-          setErrorMessage(data.message || 'A loja está fechada e não está recebendo pedidos.');
-          setIsSubmitting(false);
-          return;
-        } else if (data && data.error) {
-          setErrorMessage(data.error);
-          setIsSubmitting(false);
-          return;
-        }
-      } catch (apiErr) {
-        console.warn('API /orders error:', apiErr);
-      }
+      if (res.ok && data && data.success) {
+        const savedOrder = data.order || {
+          id: data.orderId || data.orderNumber,
+          order_number: data.orderNumber,
+          orderNumber: data.orderNumber,
+          customer_name: orderPayload.customerName,
+          customer_phone: orderPayload.customerPhone,
+          fulfillment_type: orderPayload.fulfillmentType,
+          items: orderPayload.items,
+          subtotal: orderPayload.subtotal,
+          delivery_fee: orderPayload.deliveryFee,
+          total: orderPayload.total,
+          status: 'new',
+          created_at: new Date().toISOString(),
+        };
 
-      // 2. Se a API falhou e Supabase estiver configurado no frontend
-      if (!orderSavedSuccessfully && isSupabaseConfigured() && supabase) {
+        const finalOrderNumber = data.orderNumber || savedOrder.order_number || savedOrder.orderNumber;
+
+        if (data.accessToken) {
+          openOrderTracking(finalOrderNumber, data.accessToken);
+        }
+
+        setCompletedOrder(savedOrder);
+
         try {
-          const { data: supaData, error: supaErr } = await supabase
-            .from('orders')
-            .insert({
-              order_number: orderNumber,
-              customer_name: orderPayload.customerName,
-              customer_phone: orderPayload.customerPhone,
-              fulfillment_type: orderPayload.fulfillmentType,
-              street: orderPayload.street,
-              number: orderPayload.number,
-              neighborhood: orderPayload.neighborhood,
-              complement: orderPayload.complement,
-              items: orderPayload.items,
-              subtotal: orderPayload.subtotal,
-              delivery_fee: orderPayload.deliveryFee,
-              total: orderPayload.total,
-              payment_method: orderPayload.paymentMethod,
-              status: 'new',
-              notes: orderPayload.notes,
-            })
-            .select()
-            .single();
+          localStorage.setItem('acai_last_order_created', JSON.stringify(savedOrder));
+          localStorage.setItem('acai_order_ping', Date.now().toString());
+          window.dispatchEvent(new CustomEvent('acai_order_created', { detail: savedOrder }));
+        } catch {}
 
-          if (!supaErr && supaData) {
-            orderSavedSuccessfully = true;
-            finalOrderNumber = supaData.order_number || orderNumber;
-            openOrderTracking(finalOrderNumber, supaData.access_token);
-          }
-        } catch (supaEx) {
-          console.warn('Direct Supabase insert error:', supaEx);
-        }
-      }
-
-      if (orderSavedSuccessfully) {
-        setCompletedOrder({ ...orderPayload, orderId: finalOrderNumber });
         clearCart();
-      } else if (!errorMessage) {
-        setErrorMessage('Não foi possível enviar seu pedido. Verifique sua conexão e tente novamente.');
+      } else if (res.status === 409 || res.status === 423 || (data && data.code === 'STORE_CLOSED')) {
+        console.warn('[Checkout Warning]: Loja fechada.', data);
+        setErrorMessage(data?.message || 'A loja está fechada e não está recebendo pedidos no momento.');
+      } else {
+        console.error('[Checkout Error]:', res.status, data);
+        setErrorMessage(data?.message || data?.error || 'Não foi possível enviar seu pedido. Tente novamente ou entre em contato com a loja.');
       }
-
-    setIsSubmitting(false);
+    } catch (apiErr: any) {
+      console.error('[Checkout Network Exception]:', apiErr);
+      setErrorMessage('Não foi possível enviar seu pedido. Verifique sua conexão e tente novamente.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleCloseAll = () => {

@@ -15,12 +15,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const hasSupabase = !!supabase;
     
     let dbStatus = 'desconectado';
-    if (hasSupabase) {
+    let dbError = null;
+    if (hasSupabase && supabase) {
       try {
-        const { error } = await supabase.from('orders').select('id').limit(1);
-        dbStatus = error ? 'erro_tabela' : 'conectado';
-      } catch (e) {
+        const { data, error } = await supabase.from('orders').select('id, order_number, status').limit(5);
+        if (error) {
+          dbStatus = 'erro_tabela';
+          dbError = error.message;
+        } else {
+          dbStatus = 'conectado';
+        }
+      } catch (e: any) {
         dbStatus = 'erro_conexao';
+        dbError = e?.message;
       }
     }
 
@@ -30,7 +37,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const recentOrders = await listOrders();
     const lastOrder = recentOrders.length > 0 ? recentOrders[0] : null;
-    const lastErrorOrder = recentOrders.find(o => o.last_notification_error);
 
     return res.status(200).json({
       success: true,
@@ -38,6 +44,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         database: {
           status: dbStatus,
           provider: hasSupabase ? 'Supabase PostgreSQL' : 'Armazenamento em Memória (Fallback)',
+          error: dbError,
+          supabaseUrlConfigured: !!(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL),
+          supabaseKeyConfigured: !!(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY),
         },
         realtime: {
           status: hasSupabase ? 'conectado' : 'polling_ativo',
@@ -46,9 +55,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         whatsapp: {
           status: hasWhatsApp ? 'configurado' : 'nao_configurado',
           targetPhone: process.env.STORE_WHATSAPP_NUMBER || '5513991509733',
-        },
-        push: {
-          status: 'ativo',
         },
         email: {
           status: hasEmail ? 'configurado' : 'nao_configurado',
@@ -59,12 +65,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         lastOrderReceived: lastOrder ? {
           orderNumber: lastOrder.order_number,
           createdAt: lastOrder.created_at,
-          status: lastOrder.order_status,
+          status: lastOrder.status,
           total: lastOrder.total,
-        } : null,
-        lastNotificationError: lastErrorOrder ? {
-          orderNumber: lastErrorOrder.order_number,
-          error: lastErrorOrder.last_notification_error,
         } : null,
       }
     });

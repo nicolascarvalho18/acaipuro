@@ -1,26 +1,10 @@
-import { createClient } from '@supabase/supabase-js';
-
-function getSupabaseClient() {
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-
-  if (url && key && url.trim().startsWith('http') && key.trim().length > 10) {
-    try {
-      return createClient(url.trim(), key.trim(), {
-        auth: { persistSession: false },
-      });
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
+import { getOrder, getOrderStatusHistoryDb, getSupabaseClient } from '../_services/db';
 
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
@@ -31,66 +15,44 @@ export default async function handler(req: any, res: any) {
   }
 
   if (req.method !== 'GET') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
+    return res.status(405).json({ success: false, error: 'Method Not Allowed' });
   }
 
   try {
-    const { orderNumber, token } = req.query || {};
+    const orderNumber = req.query?.orderNumber || req.query?.orderId || req.query?.id;
+    const token = req.query?.token;
 
-    if (!orderNumber) {
-      return res.status(400).json({ error: 'Número do pedido é obrigatório.' });
+    if (!orderNumber && !token) {
+      return res.status(400).json({ success: false, error: 'Identificador do pedido ou token é obrigatório.' });
     }
 
-    const supabase = getSupabaseClient();
-    if (!supabase) {
-      return res.status(200).json({
-        success: true,
-        order: {
-          order_number: orderNumber,
-          status: 'new',
-          customer_name: 'Cliente',
-          fulfillment_type: 'delivery',
-          items: [],
-          subtotal: 0,
-          delivery_fee: 0,
-          total: 0,
-          payment_method: 'pix',
-          created_at: new Date().toISOString(),
-        },
-        history: [],
-        notifications: [],
-      });
+    const searchKey = String(orderNumber || token).trim();
+    const order = await getOrder(searchKey);
+
+    if (!order) {
+      return res.status(404).json({ success: false, error: 'Pedido não encontrado.' });
     }
 
-    // Buscar pedido
-    const { data: order, error: orderErr } = await supabase
-      .from('orders')
-      .select('*')
-      .or(`order_number.eq.${orderNumber},id.eq.${orderNumber}`)
-      .single();
-
-    if (orderErr || !order) {
-      return res.status(404).json({ error: 'Pedido não encontrado.' });
-    }
-
-    // Proteção de token: se o pedido tiver access_token e o token passado não coincidir
+    // Validação de token de segurança
     const isAuthorized = !order.access_token || !token || order.access_token === token;
 
-    // Buscar histórico de status e notificações
-    const [historyRes, notifRes] = await Promise.all([
-      supabase
-        .from('order_status_history')
-        .select('*')
-        .or(`order_id.eq.${order.id},order_number.eq.${order.order_number}`)
-        .order('created_at', { ascending: true }),
-      supabase
-        .from('order_notifications')
-        .select('*')
-        .or(`order_id.eq.${order.id},order_number.eq.${order.order_number}`)
-        .order('sent_at', { ascending: true }),
-    ]);
+    // Buscar histórico real de status
+    const history = await getOrderStatusHistoryDb(order.order_number, order.id);
 
-    // Se não for autorizado pelo token, mascara telefone e endereço por segurança
+    // Buscar notificações reais
+    let notifications: any[] = [];
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        const { data: notifs } = await supabase
+          .from('order_notifications')
+          .select('*')
+          .or(`order_id.eq.${order.id},order_number.eq.${order.order_number}`)
+          .order('sent_at', { ascending: true });
+        if (notifs && notifs.length > 0) notifications = notifs;
+      } catch {}
+    }
+
     const sanitizedOrder = isAuthorized
       ? order
       : {
@@ -105,10 +67,11 @@ export default async function handler(req: any, res: any) {
       success: true,
       order: sanitizedOrder,
       isAuthorized,
-      history: historyRes.data || [],
-      notifications: notifRes.data || [],
+      history,
+      notifications,
     });
   } catch (err: any) {
-    return res.status(500).json({ error: 'Erro ao consultar acompanhamento', message: err?.message });
+    console.error('[Tracking API Error]:', err);
+    return res.status(500).json({ success: false, error: 'Erro ao consultar acompanhamento', message: err?.message });
   }
 }

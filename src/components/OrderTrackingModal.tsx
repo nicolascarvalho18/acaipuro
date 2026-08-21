@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { formatCurrency, getWhatsAppUrl } from '../utils/formatters';
 import { STORE_CONFIG } from '../config/storeConfig';
 import { supabase } from '../services/supabaseClient';
@@ -24,7 +24,10 @@ import {
   Store,
   Share2,
   Navigation,
-  Bike
+  Bike,
+  RefreshCw,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 interface OrderTrackingModalProps {
@@ -52,7 +55,7 @@ const DELIVERY_STAGES = [
   { id: 'new', label: 'Pedido recebido', description: 'Recebemos seu pedido. Em instantes vamos confirmar.', icon: ShoppingBag },
   { id: 'confirmed', label: 'Confirmado', description: 'Confirmado e entrou na fila de produção.', icon: CheckCircle2 },
   { id: 'preparing', label: 'Em preparo', description: 'Montando seu açaí artesanal com ingredientes frescos.', icon: ChefHat },
-  { id: 'delivering', label: 'Saiu para entrega', description: 'A caminho do endereço informado.', icon: Truck },
+  { id: 'delivering', label: 'Saiu para entrega', description: 'A caminho do seu endereço.', icon: Truck },
   { id: 'done', label: 'Pedido entregue', description: 'Entregue com sucesso. Bom apetite!', icon: PackageCheck },
 ];
 
@@ -60,8 +63,8 @@ const PICKUP_STAGES = [
   { id: 'new', label: 'Pedido recebido', description: 'Recebemos seu pedido. Em instantes vamos confirmar.', icon: ShoppingBag },
   { id: 'confirmed', label: 'Confirmado', description: 'Confirmado e entrou na fila de produção.', icon: CheckCircle2 },
   { id: 'preparing', label: 'Em preparo', description: 'Montando seu açaí artesanal.', icon: ChefHat },
-  { id: 'ready_for_pickup', label: 'Pronto para retirada', description: 'Seu açaí está pronto! Pode retirar no balcão.', icon: Store },
-  { id: 'done', label: 'Pedido retirado', description: 'Retirado com sucesso. Obrigado pela preferência!', icon: PackageCheck },
+  { id: 'ready_for_pickup', label: 'Pronto para retirada', description: 'Seu pedido está pronto para retirada no balcão!', icon: Store },
+  { id: 'done', label: 'Pedido retirado', description: 'Pedido retirado com sucesso. Obrigado pela preferência!', icon: PackageCheck },
 ];
 
 export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
@@ -71,15 +74,21 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
   onClose,
   initialOrderData,
 }) => {
-  const [order, setOrder] = useState<any>(initialOrderData);
+  const [order, setOrder] = useState<any>(initialOrderData || null);
   const [status, setStatus] = useState<string>(initialOrderData?.status || 'new');
+  const [statusHistory, setStatusHistory] = useState<any[]>([]);
   const [driverInfo, setDriverInfo] = useState<any | null>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [copiedLink, setCopiedLink] = useState(false);
   const [browserNotifAllowed, setBrowserNotifAllowed] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date>(new Date());
+  
   const prevStatusRef = useRef<string>(status);
+  const isFetchingRef = useRef(false);
 
-  // Som de notificação em Web Audio
+  // Som suave de notificação
   const playNotificationSound = () => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -90,10 +99,10 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
       osc.type = 'sine';
       osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
       osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1); // A5
-      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+      gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.45);
       osc.start();
-      osc.stop(audioCtx.currentTime + 0.4);
+      osc.stop(audioCtx.currentTime + 0.45);
     } catch {}
   };
 
@@ -112,24 +121,28 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
     }
   }, []);
 
-  const fetchTracking = async () => {
-    if (!orderNumber) return;
+  // Consulta do pedido em tempo real ao Backend
+  const fetchTracking = useCallback(async (isSilent: boolean = true) => {
+    if (!orderNumber || isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    if (!isSilent) setIsSyncing(true);
+
     try {
       const tokenParam = token ? `&token=${encodeURIComponent(token)}` : '';
-      let res = await fetch(`/api/orders/tracking?orderNumber=${encodeURIComponent(orderNumber)}${tokenParam}`);
-      if (!res.ok) {
-        res = await fetch(`/api/orders?orderNumber=${encodeURIComponent(orderNumber)}${tokenParam}`);
-      }
+      const res = await fetch(`/api/orders/tracking?orderNumber=${encodeURIComponent(orderNumber)}${tokenParam}`);
+
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.order) {
-          const newStatus = data.order.status;
-          
+          const newOrder = data.order;
+          const newStatus = newOrder.status;
+
           // Se o status mudou, tocar som e emitir notificação
           if (prevStatusRef.current && prevStatusRef.current !== newStatus) {
             playNotificationSound();
             if ('Notification' in window && Notification.permission === 'granted') {
-              const currentStage = (data.order.fulfillment_type === 'pickup' ? PICKUP_STAGES : DELIVERY_STAGES).find(s => s.id === newStatus);
+              const isPick = newOrder.fulfillment_type === 'pickup';
+              const currentStage = (isPick ? PICKUP_STAGES : DELIVERY_STAGES).find(s => s.id === newStatus);
               new Notification('Açaí Puro Sabor', {
                 body: currentStage?.description || `Seu pedido #${orderNumber} mudou para ${newStatus}`,
                 icon: '/favicon.svg',
@@ -138,66 +151,111 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
           }
 
           prevStatusRef.current = newStatus;
-          setOrder(data.order);
+          setOrder(newOrder);
           setStatus(newStatus);
+          setLastUpdatedAt(new Date());
+          setIsOffline(false);
+
+          if (Array.isArray(data.history) && data.history.length > 0) {
+            setStatusHistory(data.history);
+          } else if (Array.isArray(newOrder.status_history)) {
+            setStatusHistory(newOrder.status_history);
+          }
+
           if (Array.isArray(data.notifications)) {
             setNotifications(data.notifications);
           }
         }
+      } else {
+        setIsOffline(true);
       }
 
-      // Buscar localização do entregador se for entrega
-      try {
-        const loc = await getDriverLocation(orderNumber);
-        if (loc) {
-          setDriverInfo(loc);
-        }
-      } catch {}
+      // Se for entrega e estiver saindo para entrega, buscar dados do entregador
+      if (order?.fulfillment_type === 'delivery' && status === 'delivering') {
+        try {
+          const loc = await getDriverLocation(orderNumber);
+          if (loc) {
+            setDriverInfo(loc);
+          }
+        } catch {}
+      }
     } catch (e) {
-      console.warn('Tracking fetch error:', e);
+      console.warn('[Tracking Polling Warning]:', e);
+      setIsOffline(true);
+    } finally {
+      isFetchingRef.current = false;
+      if (!isSilent) setIsSyncing(false);
     }
-  };
+  }, [orderNumber, token, order?.fulfillment_type, status]);
 
   useEffect(() => {
     if (isOpen && orderNumber) {
-      fetchTracking();
-      const interval = setInterval(fetchTracking, 2500);
+      fetchTracking(false);
+      const interval = setInterval(() => fetchTracking(true), 2500);
+
+      // Event listener local para atualização instantânea
+      const handleLocalStatusChange = (e: any) => {
+        const changedOrder = e.detail;
+        if (changedOrder && (changedOrder.order_number === orderNumber || changedOrder.id === orderNumber)) {
+          setOrder((prev: any) => ({ ...prev, ...changedOrder }));
+          setStatus(changedOrder.status);
+          setLastUpdatedAt(new Date());
+          if (prevStatusRef.current !== changedOrder.status) {
+            playNotificationSound();
+            prevStatusRef.current = changedOrder.status;
+          }
+        }
+      };
+      window.addEventListener('acai_order_status_changed', handleLocalStatusChange);
 
       // Supabase Realtime se configurado
       let channel: any = null;
       if (supabase) {
-        channel = supabase
-          .channel(`order_tracking_${orderNumber}`)
-          .on(
-            'postgres_changes',
-            { event: 'UPDATE', schema: 'public', table: 'orders', filter: `order_number=eq.${orderNumber}` },
-            (payload: any) => {
-              if (payload.new) {
-                setOrder(payload.new);
-                setStatus(payload.new.status);
-                playNotificationSound();
+        try {
+          channel = supabase
+            .channel(`order_tracking_${orderNumber}`)
+            .on(
+              'postgres_changes',
+              { event: 'UPDATE', schema: 'public', table: 'orders', filter: `order_number=eq.${orderNumber}` },
+              (payload: any) => {
+                if (payload.new) {
+                  setOrder((prev: any) => ({ ...prev, ...payload.new }));
+                  setStatus(payload.new.status);
+                  setLastUpdatedAt(new Date());
+                  if (prevStatusRef.current !== payload.new.status) {
+                    playNotificationSound();
+                    prevStatusRef.current = payload.new.status;
+                  }
+                }
               }
-            }
-          )
-          .subscribe();
+            )
+            .subscribe();
+        } catch (e) {
+          console.warn('[Supabase Realtime Error]:', e);
+        }
       }
 
       return () => {
         clearInterval(interval);
+        window.removeEventListener('acai_order_status_changed', handleLocalStatusChange);
         if (channel && supabase) {
           supabase.removeChannel(channel);
         }
       };
     }
-  }, [isOpen, orderNumber, token]);
+  }, [isOpen, orderNumber, fetchTracking]);
 
   if (!isOpen) return null;
 
   const isPickup = order?.fulfillment_type === 'pickup' || order?.deliveryType === 'pickup';
   const stages = isPickup ? PICKUP_STAGES : DELIVERY_STAGES;
-  const currentStageIndex = stages.findIndex(s => s.id === status);
+  const normalizedStatus = (status === 'out_for_delivery' ? 'delivering' : (status === 'completed' ? 'done' : status));
+  const currentStageIndex = stages.findIndex(s => s.id === normalizedStatus);
   const isCancelled = status === 'cancelled';
-  const isDone = status === 'done';
+  const isDone = normalizedStatus === 'done';
+
+  // O MAPA SOMENTE DEVE APARECER EM PEDIDOS DE ENTREGA QUANDO O STATUS FOR "DELIVERING" (SAIU PARA ENTREGA)
+  const shouldShowMap = !isPickup && !isCancelled && normalizedStatus === 'delivering';
 
   const trackingLink = typeof window !== 'undefined'
     ? `${window.location.origin}/pedido/${orderNumber}${order?.access_token || token ? `?token=${order?.access_token || token}` : ''}`
@@ -211,8 +269,22 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
     }
   };
 
+  // Encontrar o horário em que o estágio foi alcançado no histórico
+  const getStageTime = (stageId: string): string | null => {
+    if (!statusHistory || statusHistory.length === 0) return null;
+    const item = statusHistory.find(h => h.new_status === stageId || (stageId === 'new' && h.previous_status === null));
+    if (item && item.created_at) {
+      try {
+        return new Date(item.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
       <div 
         className="bg-white w-full max-w-lg rounded-3xl shadow-2xl border border-[#ECE8F0] overflow-hidden flex flex-col max-h-[92vh]"
         onClick={(e) => e.stopPropagation()}
@@ -221,10 +293,20 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
         {/* Topo do Modal */}
         <div className="p-4 sm:p-5 border-b border-[#ECE8F0] flex items-center justify-between bg-white shrink-0">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold tracking-wider uppercase text-[#69318A] bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-100">
-                Acompanhamento em Tempo Real
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] font-bold tracking-wider uppercase text-[#69318A] bg-purple-50 px-2.5 py-0.5 rounded-full border border-purple-100 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+                <span>Ao Vivo</span>
               </span>
+
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                isPickup 
+                  ? 'bg-amber-50 text-amber-800 border border-amber-200' 
+                  : 'bg-blue-50 text-blue-800 border border-blue-200'
+              }`}>
+                {isPickup ? '🏪 Retirada no Balcão' : '🛵 Entrega em Domicílio'}
+              </span>
+
               {!browserNotifAllowed && (
                 <button
                   onClick={requestNotificationPermission}
@@ -235,54 +317,108 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 </button>
               )}
             </div>
+
             <h2 className="text-base sm:text-lg font-bold text-[#28242A] font-['DM_Sans'] mt-1">
               Pedido #{orderNumber}
             </h2>
           </div>
 
-          <button
-            onClick={onClose}
-            className="p-1.5 text-[#726C74] hover:text-[#28242A] rounded-xl hover:bg-[#F3EDF6] transition-colors cursor-pointer"
-            aria-label="Fechar"
-          >
-            <X className="w-5 h-5 stroke-[1.8]" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => fetchTracking(false)}
+              disabled={isSyncing}
+              className="p-1.5 text-[#726C74] hover:text-[#69318A] rounded-xl hover:bg-[#F3EDF6] transition-colors cursor-pointer"
+              title="Atualizar agora"
+            >
+              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin text-[#69318A]' : ''}`} />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1.5 text-[#726C74] hover:text-[#28242A] rounded-xl hover:bg-[#F3EDF6] transition-colors cursor-pointer"
+              aria-label="Fechar"
+            >
+              <X className="w-5 h-5 stroke-[1.8]" />
+            </button>
+          </div>
         </div>
+
+        {/* Status de Sincronização / Conexão */}
+        {isOffline ? (
+          <div className="px-4 py-1.5 bg-amber-50 border-b border-amber-200 text-[11px] text-amber-800 flex items-center justify-between">
+            <span className="flex items-center gap-1.5 font-medium">
+              <WifiOff className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+              <span>Tentando atualizar o pedido...</span>
+            </span>
+            <button onClick={() => fetchTracking(false)} className="font-bold underline cursor-pointer">
+              Reconectar
+            </button>
+          </div>
+        ) : (
+          <div className="px-4 py-1 bg-[#FCFAF7] border-b border-[#ECE8F0] text-[10px] text-[#726C74] flex items-center justify-between">
+            <span className="flex items-center gap-1">
+              <Wifi className="w-3 h-3 text-emerald-600" />
+              <span>Sincronizado em tempo real</span>
+            </span>
+            <span>Atualizado às {lastUpdatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+          </div>
+        )}
 
         <div className="p-5 sm:p-6 overflow-y-auto space-y-6">
           
-          {/* Alerta de Status */}
+          {/* Card Hero de Destaque do Status Atual */}
           {isCancelled ? (
             <div className="p-4 bg-red-50 border border-red-200 rounded-2xl text-center space-y-2">
               <AlertCircle className="w-8 h-8 text-red-600 mx-auto" />
               <div>
                 <h3 className="text-sm font-bold text-red-900">Pedido Cancelado</h3>
                 <p className="text-xs text-red-700 mt-0.5">
-                  {order?.cancellation_reason ? `Motivo: ${order.cancellation_reason}` : 'Este pedido foi cancelado pela loja.'}
+                  {order?.cancellation_reason ? `Motivo: ${order.cancellation_reason}` : 'Este pedido foi cancelado pela açaiteria.'}
                 </p>
               </div>
             </div>
           ) : isDone ? (
             <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-1.5">
-              <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto">
+              <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto shadow-xs">
                 <PackageCheck className="w-6 h-6 stroke-[2]" />
               </div>
               <h3 className="text-base font-bold text-emerald-900 font-['DM_Sans']">
-                {isPickup ? 'Pedido Retirado!' : 'Pedido Entregue!'}
+                {isPickup ? 'Pedido Retirado com Sucesso!' : 'Pedido Entregue com Sucesso!'}
               </h3>
               <p className="text-xs text-emerald-700">
                 {isPickup ? 'Obrigado pela preferência, volte sempre!' : 'Bom apetite! Obrigado por escolher a Açaí Puro Sabor.'}
               </p>
             </div>
+          ) : normalizedStatus === 'ready_for_pickup' ? (
+            <div className="p-4 bg-emerald-50 border-2 border-emerald-400 rounded-2xl text-center space-y-1.5 animate-pulse shadow-sm">
+              <div className="w-12 h-12 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto">
+                <Store className="w-6 h-6 stroke-[2]" />
+              </div>
+              <h3 className="text-base font-bold text-emerald-900 font-['DM_Sans']">
+                Seu pedido está pronto para retirada!
+              </h3>
+              <p className="text-xs text-emerald-700 font-medium">
+                Pode se dirigir ao balcão da açaiteria para retirar seu pedido.
+              </p>
+            </div>
+          ) : normalizedStatus === 'delivering' ? (
+            <div className="p-4 bg-purple-50 border border-[#69318A]/30 rounded-2xl text-center space-y-1.5 shadow-sm">
+              <div className="w-12 h-12 rounded-full bg-[#69318A] text-white flex items-center justify-center mx-auto shadow-md">
+                <Truck className="w-6 h-6 stroke-[1.8] animate-bounce" />
+              </div>
+              <h3 className="text-base font-bold text-[#28242A] font-['DM_Sans']">
+                Saiu para entrega!
+              </h3>
+              <p className="text-xs text-[#69318A] font-semibold">
+                O entregador já está a caminho do seu endereço.
+              </p>
+            </div>
           ) : (
             <div className="text-center space-y-1.5">
               <div className="w-12 h-12 rounded-full bg-purple-50 text-[#69318A] flex items-center justify-center mx-auto border border-purple-100 shadow-2xs">
-                {status === 'delivering' ? (
-                  <Truck className="w-6 h-6 stroke-[1.8] animate-bounce" />
-                ) : status === 'ready_for_pickup' ? (
-                  <Store className="w-6 h-6 stroke-[1.8] animate-pulse" />
-                ) : status === 'preparing' ? (
+                {status === 'preparing' ? (
                   <ChefHat className="w-6 h-6 stroke-[1.8] animate-spin" />
+                ) : status === 'confirmed' ? (
+                  <CheckCircle2 className="w-6 h-6 stroke-[1.8]" />
                 ) : (
                   <ShoppingBag className="w-6 h-6 stroke-[1.8]" />
                 )}
@@ -296,9 +432,9 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
             </div>
           )}
 
-          {/* MAPA EM TEMPO REAL COM ROTA & ENTREGADOR (DELIVERY) */}
-          {!isPickup && !isCancelled && !isDone && (
-            <div className="space-y-3">
+          {/* MAPA EM TEMPO REAL COM ROTA & ENTREGADOR — SOMENTE EM PEDIDOS DE ENTREGA E STATUS "DELIVERING" */}
+          {shouldShowMap && (
+            <div className="space-y-3 animate-in fade-in duration-300">
               <div className="rounded-2xl overflow-hidden shadow-inner border border-[#ECE8F0]">
                 <LeafletMap
                   height="220px"
@@ -320,7 +456,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 />
               </div>
 
-              {/* Card do Entregador Designado */}
+              {/* Card do Entregador */}
               {driverInfo ? (
                 <div className="p-3.5 bg-purple-50/70 border border-purple-100 rounded-2xl flex items-center justify-between text-xs">
                   <div className="flex items-center gap-3">
@@ -338,16 +474,11 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                     ● Em rota
                   </span>
                 </div>
-              ) : (
-                <div className="p-3 bg-[#FCFAF7] border border-[#ECE8F0] rounded-2xl flex items-center gap-2 text-xs text-[#726C74]">
-                  <Clock className="w-4 h-4 text-[#69318A] shrink-0" />
-                  <span>A açaiteria está preparando seu pedido e logo um entregador será designado.</span>
-                </div>
-              )}
+              ) : null}
             </div>
           )}
 
-          {/* Timeline Visual em Tempo Real (iFood Style) */}
+          {/* Timeline Visual em Tempo Real */}
           {!isCancelled && (
             <div className="bg-[#FCFAF7] p-4 sm:p-5 rounded-2xl border border-[#ECE8F0] space-y-4">
               <div className="flex items-center justify-between">
@@ -356,7 +487,7 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                 </p>
                 <span className="text-[11px] text-[#69318A] font-semibold flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5" />
-                  <span>Previsão: {order?.estimated_time || '30 a 45 min'}</span>
+                  <span>Previsão: {order?.estimated_time || (isPickup ? '15 a 25 min' : '30 a 45 min')}</span>
                 </span>
               </div>
 
@@ -367,12 +498,13 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                   const Icon = stage.icon;
                   const isCompleted = currentStageIndex >= index;
                   const isCurrent = currentStageIndex === index;
+                  const stageTime = getStageTime(stage.id);
 
                   return (
                     <div key={stage.id} className="relative flex items-start gap-3">
                       <div className={`absolute -left-6 top-0.5 w-5 h-5 rounded-full flex items-center justify-center transition-all ${
                         isCompleted 
-                          ? 'bg-[#69318A] text-white ring-4 ring-purple-100' 
+                          ? 'bg-[#69318A] text-white ring-4 ring-purple-100 shadow-xs' 
                           : 'bg-white border-2 border-[#ECE8F0] text-gray-300'
                       }`}>
                         <Icon className="w-3 h-3 stroke-[2]" />
@@ -383,11 +515,16 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                           <p className={`text-xs font-bold ${isCurrent ? 'text-[#69318A]' : (isCompleted ? 'text-[#28242A]' : 'text-gray-400')}`}>
                             {stage.label}
                             {isCurrent && !isDone && (
-                              <span className="ml-2 text-[10px] text-[#69318A] font-normal animate-pulse">
+                              <span className="ml-2 text-[10px] text-[#69318A] font-semibold animate-pulse">
                                 ● Em andamento
                               </span>
                             )}
                           </p>
+                          {stageTime && (
+                            <span className="text-[10px] text-[#726C74] font-medium shrink-0">
+                              {stageTime}
+                            </span>
+                          )}
                         </div>
                         <p className="text-[11px] text-[#726C74] mt-0.5">{stage.description}</p>
                       </div>
@@ -418,27 +555,42 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
             </div>
           )}
 
-          {/* Detalhes do Pedido */}
-          {order && (
+          {/* Detalhes do Pedido Carregados do Banco */}
+          {order ? (
             <div className="bg-white p-4 sm:p-5 rounded-2xl border border-[#ECE8F0] space-y-3 text-xs text-[#726C74]">
               <div className="flex justify-between items-center pb-2 border-b border-[#ECE8F0]">
                 <span className="font-bold text-[#28242A]">Resumo do Pedido</span>
-                <span className="text-[11px] text-[#69318A] font-bold">
-                  {order.fulfillment_type === 'pickup' ? '🏪 Retirada no Balcão' : '🛵 Entrega em Domicílio'}
+                <span className={`text-[11px] font-bold ${isPickup ? 'text-amber-800' : 'text-[#69318A]'}`}>
+                  {isPickup ? '🏪 Retirada no Balcão' : '🛵 Entrega em Domicílio'}
                 </span>
               </div>
 
               <div className="space-y-2">
-                <p><strong>Cliente:</strong> {order.customer_name || order.customerName}</p>
+                <p><strong>Cliente:</strong> {order.customer_name || order.customerName || 'Cliente'}</p>
+                {order.customer_phone && <p><strong>Telefone:</strong> {order.customer_phone}</p>}
                 
-                {order.fulfillment_type === 'delivery' && order.street && (
-                  <div className="flex items-start gap-1.5">
-                    <MapPin className="w-3.5 h-3.5 text-[#69318A] shrink-0 mt-0.5" />
-                    <span>
-                      {order.street}, Nº {order.number} - {order.neighborhood}
-                      {order.complement ? ` (${order.complement})` : ''}
-                    </span>
+                {/* Endereço de Entrega ou Local de Retirada */}
+                {isPickup ? (
+                  <div className="flex items-start gap-1.5 p-2.5 bg-amber-50/70 rounded-xl border border-amber-200/60 text-[11px] text-amber-900">
+                    <Store className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <div>
+                      <strong className="block">Local de Retirada:</strong>
+                      <span>Açaí Puro Sabor — {STORE_CONFIG.address || 'Santos - SP'}</span>
+                    </div>
                   </div>
+                ) : (
+                  order.street && (
+                    <div className="flex items-start gap-1.5 p-2.5 bg-blue-50/70 rounded-xl border border-blue-200/60 text-[11px] text-blue-950">
+                      <MapPin className="w-4 h-4 text-[#69318A] shrink-0 mt-0.5" />
+                      <div>
+                        <strong className="block">Endereço de Entrega:</strong>
+                        <span>
+                          {order.street}, Nº {order.number} — {order.neighborhood}
+                          {order.complement ? ` (${order.complement})` : ''}
+                        </span>
+                      </div>
+                    </div>
+                  )
                 )}
 
                 {/* Lista de Itens */}
@@ -446,10 +598,10 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                   <div className="pt-2 border-t border-[#ECE8F0] space-y-1.5">
                     <p className="font-bold text-[#28242A]">Itens:</p>
                     {order.items.map((it: any, idx: number) => (
-                      <div key={idx} className="bg-[#FCFAF7] p-2 rounded-lg border border-[#ECE8F0] text-[11px]">
+                      <div key={idx} className="bg-[#FCFAF7] p-2.5 rounded-xl border border-[#ECE8F0] text-[11px] space-y-0.5">
                         <div className="flex justify-between font-bold text-[#28242A]">
                           <span>{it.quantity}x {it.name} {it.size ? `(${it.size})` : ''}</span>
-                          <span>{formatCurrency(it.totalPrice || it.unitPrice * it.quantity)}</span>
+                          <span>{formatCurrency(it.totalPrice || (it.unitPrice * it.quantity))}</span>
                         </div>
                         {it.base && <p className="text-[#726C74]">Base: {it.base}</p>}
                         {Array.isArray(it.additionals) && it.additionals.length > 0 && (
@@ -461,43 +613,56 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
                   </div>
                 )}
 
-                {/* Valores */}
+                {/* Valores Financeiros */}
                 <div className="pt-2 border-t border-[#ECE8F0] space-y-1">
                   <div className="flex justify-between">
                     <span>Subtotal:</span>
-                    <span>{formatCurrency(order.subtotal || 0)}</span>
+                    <span className="font-medium text-[#28242A]">{formatCurrency(order.subtotal || 0)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Taxa de entrega:</span>
-                    <span>{order.delivery_fee > 0 ? formatCurrency(order.delivery_fee) : 'Grátis'}</span>
+                    <span className="font-medium text-[#28242A]">
+                      {isPickup 
+                        ? 'Grátis (Retirada)' 
+                        : (Number(order.delivery_fee) > 0 ? formatCurrency(order.delivery_fee) : 'Grátis')}
+                    </span>
                   </div>
-                  <div className="flex justify-between items-center text-sm font-bold text-[#28242A] pt-1 border-t border-[#ECE8F0] font-['DM_Sans']">
+                  <div className="flex justify-between items-center text-sm font-bold text-[#28242A] pt-1.5 border-t border-[#ECE8F0] font-['DM_Sans']">
                     <span>Total a pagar:</span>
                     <span className="text-[#49245B] text-base">{formatCurrency(order.total || 0)}</span>
                   </div>
                 </div>
 
                 <div className="flex justify-between items-center pt-1 text-[11px]">
-                  <span>Pagamento:</span>
+                  <span>Forma de pagamento:</span>
                   <span className="font-bold uppercase text-[#28242A]">
-                    {order.payment_method === 'pix' ? 'Pix' : (order.payment_method === 'delivery' ? 'Na entrega' : 'Cartão Online')}
+                    {order.payment_method === 'pix' 
+                      ? 'Pix' 
+                      : (order.payment_method === 'delivery' 
+                          ? 'Pagamento na entrega/retirada' 
+                          : 'Cartão Online')}
                   </span>
                 </div>
               </div>
             </div>
+          ) : (
+            <div className="p-6 text-center text-xs text-[#726C74] space-y-2">
+              <RefreshCw className="w-6 h-6 animate-spin text-[#69318A] mx-auto" />
+              <p>Carregando dados do pedido do banco de dados...</p>
+            </div>
           )}
 
           {/* Link Seguro de Acompanhamento */}
-          <div className="p-3 bg-purple-50/70 border border-purple-100 rounded-xl space-y-2">
+          <div className="p-3.5 bg-purple-50/70 border border-purple-100 rounded-2xl space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-[#69318A] flex items-center gap-1.5">
                 <Share2 className="w-3.5 h-3.5" />
-                <span>Link do Pedido</span>
+                <span>Link Seguro de Acompanhamento</span>
               </span>
               <button
                 type="button"
                 onClick={handleCopyLink}
-                className="text-[10px] font-bold text-[#69318A] hover:text-[#572185] flex items-center gap-1 cursor-pointer bg-white px-2.5 py-1 rounded-lg border border-purple-200"
+                className="text-[10px] font-bold text-[#69318A] hover:text-[#572185] flex items-center gap-1 cursor-pointer bg-white px-2.5 py-1 rounded-lg border border-purple-200 shadow-2xs"
               >
                 {copiedLink ? (
                   <>
@@ -546,3 +711,4 @@ export const OrderTrackingModal: React.FC<OrderTrackingModalProps> = ({
     </div>
   );
 };
+

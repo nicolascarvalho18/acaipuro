@@ -159,3 +159,110 @@ export async function sendWhatsAppNotification(
     };
   }
 }
+
+/**
+ * Envia notificação automática no WhatsApp do cliente ao mudar o status do pedido
+ */
+export async function sendCustomerWhatsAppStatusNotification(
+  order: DbOrder,
+  newStatus: string
+): Promise<{ sent: boolean; status: 'sent' | 'failed' | 'not_configured'; error?: string; message?: string }> {
+  const customerName = order.customer_name || 'Cliente';
+  const orderNumber = order.order_number;
+  const rawPhone = order.customer_phone || '';
+  let cleanPhone = rawPhone.replace(/\D/g, '');
+
+  if (!cleanPhone || cleanPhone.length < 10) {
+    console.log(`[WhatsApp Customer] Telefone do cliente inválido ou ausente no pedido #${orderNumber}: "${rawPhone}"`);
+    return {
+      sent: false,
+      status: 'failed',
+      error: 'Telefone do cliente não informado ou formato inválido.',
+    };
+  }
+
+  // Garantir DDI 55 (Brasil)
+  if (cleanPhone.length === 10 || cleanPhone.length === 11) {
+    cleanPhone = '55' + cleanPhone;
+  }
+
+  let messageText = '';
+  const statusNorm = newStatus.toLowerCase().trim();
+
+  if (statusNorm === 'confirmed' || statusNorm === 'preparing') {
+    messageText = `Olá, ${customerName}! Seu pedido #${orderNumber} foi confirmado e já está sendo preparado. Avisaremos quando sair para entrega.`;
+  } else if (statusNorm === 'delivering' || statusNorm === 'out_for_delivery') {
+    messageText = `Olá, ${customerName}! Seu pedido #${orderNumber} saiu para entrega e chegará em breve.`;
+  } else if (statusNorm === 'ready_for_pickup') {
+    messageText = `Olá, ${customerName}! Seu pedido #${orderNumber} está pronto para retirada.`;
+  } else if (statusNorm === 'cancelled') {
+    messageText = `Olá, ${customerName}. Seu pedido #${orderNumber} foi cancelado. Em caso de dúvidas, entre em contato conosco.`;
+  } else if (statusNorm === 'done' || statusNorm === 'completed') {
+    messageText = `Olá, ${customerName}! Seu pedido #${orderNumber} foi finalizado com sucesso. Bom apetite e obrigado pela preferência!`;
+  } else {
+    return { sent: false, status: 'not_configured', error: 'Status sem mensagem configurada.' };
+  }
+
+  const token = process.env.WHATSAPP_API_TOKEN;
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+  if (!token || !phoneNumberId || token.trim() === '' || phoneNumberId.trim() === '') {
+    console.log(`[WhatsApp Customer] API do WhatsApp Cloud não configurada. Mensagem preparada para #${orderNumber} (${cleanPhone}):\n"${messageText}"`);
+    return {
+      sent: false,
+      status: 'not_configured',
+      error: 'Credenciais WHATSAPP_API_TOKEN ou WHATSAPP_PHONE_NUMBER_ID não configuradas no servidor.',
+      message: messageText,
+    };
+  }
+
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/v19.0/${phoneNumberId.trim()}/messages`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token.trim()}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: cleanPhone,
+          type: 'text',
+          text: {
+            preview_url: false,
+            body: messageText,
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('[WhatsApp Customer] Erro na Meta Graph API:', data);
+      return {
+        sent: false,
+        status: 'failed',
+        error: data.error?.message || 'Falha ao enviar mensagem pelo WhatsApp.',
+        message: messageText,
+      };
+    }
+
+    console.log(`[WhatsApp Customer] Mensagem enviada com sucesso para ${cleanPhone} (Pedido #${orderNumber})`);
+    return {
+      sent: true,
+      status: 'sent',
+      message: messageText,
+    };
+  } catch (err: any) {
+    console.error('[WhatsApp Customer] Erro de rede:', err);
+    return {
+      sent: false,
+      status: 'failed',
+      error: err?.message || 'Erro de conexão com a API do WhatsApp.',
+      message: messageText,
+    };
+  }
+}

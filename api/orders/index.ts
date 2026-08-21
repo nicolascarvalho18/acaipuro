@@ -1,4 +1,18 @@
-import { createClient } from '@supabase/supabase-js';
+import {
+  insertOrder,
+  listAllOrders,
+  getOrder,
+  updateOrderStatusDb,
+  softDeleteOrderDb,
+  restoreOrderDb,
+  hardDeleteOrderDb,
+  archiveOrderDb,
+  updateInternalNotesDb,
+  getSupabaseClient,
+  isStoreOpenDb,
+  getStoreSettings,
+  DbOrder
+} from '../_services/db';
 
 // Catálogo base de fallback
 const DEFAULT_CATALOG: Record<string, { basePrice: number; promoPrice?: number; sizes?: Record<string, number>; maxFree?: number }> = {
@@ -42,8 +56,6 @@ const DEFAULT_CATALOG: Record<string, { basePrice: number; promoPrice?: number; 
   'prod_agua_mineral': { basePrice: 4.50 },
   'prod_refrigerante_lata': { basePrice: 6.50 },
 };
-
-let memoryOrders: any[] = [];
 
 const DEFAULT_DRIVERS = [
   {
@@ -101,27 +113,11 @@ function generateRandomToken(): string {
   return 'tok_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
 }
 
-function getSupabaseClient() {
-  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
-
-  if (url && key && url.trim().startsWith('http') && key.trim().length > 10) {
-    try {
-      return createClient(url.trim(), key.trim(), {
-        auth: { persistSession: false },
-      });
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST,PATCH');
-  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
@@ -227,131 +223,77 @@ export default async function handler(req: any, res: any) {
       const statusFilter = req.query?.status;
       const includeArchived = req.query?.includeArchived === 'true';
       const includeDeleted = req.query?.includeDeleted === 'true';
+      const deletedOnly = req.query?.deletedOnly === 'true';
 
       // Se for consulta de rastreamento de pedido individual
       if (orderNumber) {
-        if (supabase) {
-          try {
-            const { data: order, error } = await supabase
-              .from('orders')
-              .select('*')
-              .or(`order_number.eq.${orderNumber},id.eq.${orderNumber}`)
-              .single();
+        const order = await getOrder(orderNumber);
+        if (order) {
+          const isAuthorized = !order.access_token || !token || order.access_token === token;
+          const sanitizedOrder = {
+            id: order.id,
+            order_number: order.order_number,
+            customer_name: order.customer_name,
+            customer_phone: isAuthorized ? order.customer_phone : '***',
+            fulfillment_type: order.fulfillment_type,
+            street: isAuthorized ? order.street : undefined,
+            number: isAuthorized ? order.number : undefined,
+            neighborhood: order.neighborhood,
+            complement: isAuthorized ? order.complement : undefined,
+            items: order.items,
+            subtotal: order.subtotal,
+            delivery_fee: order.delivery_fee,
+            total: order.total,
+            payment_method: order.payment_method,
+            status: order.status,
+            notes: isAuthorized ? order.notes : undefined,
+            cancellation_reason: order.cancellation_reason,
+            created_at: order.created_at,
+            updated_at: order.updated_at,
+            completed_at: order.completed_at,
+          };
 
-            if (!error && order) {
-              const isAuthorized = !order.access_token || !token || order.access_token === token;
-              const sanitizedOrder = {
-                id: order.id,
-                order_number: order.order_number,
-                customer_name: order.customer_name,
-                customer_phone: isAuthorized ? order.customer_phone : '***',
-                fulfillment_type: order.fulfillment_type,
-                street: isAuthorized ? order.street : undefined,
-                number: isAuthorized ? order.number : undefined,
-                neighborhood: order.neighborhood,
-                complement: isAuthorized ? order.complement : undefined,
-                items: order.items,
-                subtotal: order.subtotal,
-                delivery_fee: order.delivery_fee,
-                total: order.total,
-                payment_method: order.payment_method,
-                status: order.status,
-                notes: isAuthorized ? order.notes : undefined,
-                cancellation_reason: order.cancellation_reason,
-                created_at: order.created_at,
-                updated_at: order.updated_at,
-                completed_at: order.completed_at,
-              };
+          let history: any[] = [];
+          let notifications: any[] = [];
+          if (supabase && order.id) {
+            try {
+              const { data: hData } = await supabase
+                .from('order_status_history')
+                .select('*')
+                .eq('order_id', order.id)
+                .order('created_at', { ascending: true });
+              if (hData) history = hData;
 
-              // Buscar histórico e notificações se existirem
-              let history: any[] = [];
-              let notifications: any[] = [];
-              try {
-                const { data: hData } = await supabase
-                  .from('order_status_history')
-                  .select('*')
-                  .eq('order_id', order.id)
-                  .order('created_at', { ascending: true });
-                if (hData) history = hData;
-
-                const { data: nData } = await supabase
-                  .from('order_notifications')
-                  .select('*')
-                  .eq('order_id', order.id)
-                  .order('created_at', { ascending: false });
-                if (nData) notifications = nData;
-              } catch {}
-
-              return res.status(200).json({
-                success: true,
-                order: sanitizedOrder,
-                history,
-                notifications,
-                isAuthorized,
-              });
-            }
-          } catch (e) {
-            console.warn('Supabase tracking lookup error:', e);
+              const { data: nData } = await supabase
+                .from('order_notifications')
+                .select('*')
+                .eq('order_id', order.id)
+                .order('created_at', { ascending: false });
+              if (nData) notifications = nData;
+            } catch {}
           }
-        }
 
-        const mem = memoryOrders.find(o => o.order_number === orderNumber || o.id === orderNumber);
-        if (mem) {
           return res.status(200).json({
             success: true,
-            order: mem,
-            history: [],
-            notifications: [],
-            isAuthorized: true,
+            order: sanitizedOrder,
+            history,
+            notifications,
+            isAuthorized,
           });
         }
 
         return res.status(404).json({ success: false, error: 'Pedido não encontrado' });
       }
 
-      if (supabase) {
-        try {
-          let query = supabase
-            .from('orders')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-          if (!includeDeleted) {
-            query = query.is('deleted_at', null);
-          }
-
-          if (!includeArchived && statusFilter !== 'archived') {
-            query = query.eq('is_archived', false);
-          } else if (statusFilter === 'archived') {
-            query = query.eq('is_archived', true);
-          }
-
-          if (statusFilter && statusFilter !== 'all' && statusFilter !== 'archived') {
-            query = query.eq('status', statusFilter);
-          }
-
-          const { data, error } = await query;
-          if (!error && data) {
-            return res.status(200).json({ success: true, orders: data });
-          }
-        } catch (dbErr) {
-          console.error('[Supabase Query Error]:', dbErr);
-        }
-      }
-
-      let filtered = memoryOrders.filter(o => !o.deleted_at);
-      if (!includeArchived) filtered = filtered.filter(o => !o.is_archived);
-      if (statusFilter && statusFilter !== 'all') {
-        filtered = filtered.filter(o => o.status === statusFilter);
-      }
-
-      return res.status(200).json({ success: true, orders: filtered });
-    } catch {
-      return res.status(200).json({ success: true, orders: memoryOrders });
+      // Consulta de todos os pedidos com fonte única
+      const orders = await listAllOrders({ includeArchived, includeDeleted, deletedOnly, statusFilter });
+      return res.status(200).json({ success: true, orders });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err?.message });
     }
   }
 
-  // POST: Criar e Recalcular Pedido Oficial ou Ações de Entrega
+  // POST: Criar e Recalcular Pedido Oficial ou Ações de Entrega / Gestão
   if (req.method === 'POST') {
     try {
       let body = req.body;
@@ -462,6 +404,7 @@ export default async function handler(req: any, res: any) {
               .eq('status', 'offered');
             if (assignmentId) q = q.eq('id', assignmentId);
             else q = q.eq('order_number', orderNumber);
+
             const { data: accepted } = await q.select('*, driver:delivery_drivers(*)').maybeSingle();
             if (accepted) {
               await supabase.from('delivery_drivers').update({ availability_status: 'busy', updated_at: now }).eq('id', driverId);
@@ -479,8 +422,8 @@ export default async function handler(req: any, res: any) {
         return res.status(409).json({ error: 'Corrida não mais disponível' });
       }
 
-      // 5. Atualizar Status da Entrega
-      if (action === 'update_delivery_status' || action === 'update_status') {
+      // 5. Atualizar Status de Entrega
+      if (action === 'update_delivery_status') {
         const { assignmentId, orderNumber, driverId, status, reason } = body;
         const updatePayload: any = { status, updated_at: now };
         if (status === 'picked_up') updatePayload.picked_up_at = now;
@@ -495,12 +438,14 @@ export default async function handler(req: any, res: any) {
             else q = q.eq('order_number', orderNumber);
             const { data } = await q.select('*, driver:delivery_drivers(*)').maybeSingle();
 
-            if (status === 'picked_up' || status === 'in_transit') {
-              await supabase.from('orders').update({ status: 'delivering', updated_at: now }).eq('order_number', orderNumber);
-            } else if (status === 'delivered') {
-              await supabase.from('orders').update({ status: 'done', completed_at: now, updated_at: now }).eq('order_number', orderNumber);
-              if (driverId) {
-                await supabase.from('delivery_drivers').update({ availability_status: 'available', updated_at: now }).eq('id', driverId);
+            if (orderNumber) {
+              if (status === 'picked_up' || status === 'in_transit') {
+                await updateOrderStatusDb(orderNumber, 'delivering', reason, 'driver');
+              } else if (status === 'delivered') {
+                await updateOrderStatusDb(orderNumber, 'done', reason, 'driver');
+                if (driverId) {
+                  await supabase.from('delivery_drivers').update({ availability_status: 'available', updated_at: now }).eq('id', driverId);
+                }
               }
             }
             return res.status(200).json({ success: true, assignment: data });
@@ -509,7 +454,7 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, status, assignmentId, orderNumber });
       }
 
-      // 6. Atualizar Localização GPS do Entregador
+      // 6. Atualizar GPS do Entregador
       if (action === 'update_driver_location' || action === 'update_location') {
         const { driverId, latitude, longitude, accuracy } = body;
         const lat = Number(latitude);
@@ -536,33 +481,89 @@ export default async function handler(req: any, res: any) {
         return res.status(200).json({ success: true, latitude: lat, longitude: lng, recordedAt: now });
       }
 
+      // 7. Ações de Gestão de Pedidos
+      if (action === 'update_status') {
+        const { orderId, orderNumber, status, reason, changedBy = 'admin' } = body;
+        const targetId = orderId || orderNumber;
+        const updated = await updateOrderStatusDb(targetId, status, reason, changedBy);
+        return res.status(200).json({ success: true, order: updated });
+      }
+
+      if (action === 'delete') {
+        const { orderId, orderNumber, reason, adminEmail } = body;
+        const targetId = orderId || orderNumber;
+        const ok = await softDeleteOrderDb(targetId, reason, adminEmail);
+        return res.status(200).json({ success: ok });
+      }
+
+      if (action === 'restore') {
+        const { orderId, orderNumber, adminEmail } = body;
+        const targetId = orderId || orderNumber;
+        const ok = await restoreOrderDb(targetId, adminEmail);
+        return res.status(200).json({ success: ok });
+      }
+
+      if (action === 'hard_delete') {
+        const { orderId, orderNumber, adminEmail } = body;
+        const targetId = orderId || orderNumber;
+        const ok = await hardDeleteOrderDb(targetId, adminEmail);
+        return res.status(200).json({ success: ok });
+      }
+
+      if (action === 'archive' || action === 'unarchive') {
+        const { orderId, orderNumber, adminEmail } = body;
+        const targetId = orderId || orderNumber;
+        const ok = await archiveOrderDb(targetId, action === 'archive', adminEmail);
+        return res.status(200).json({ success: ok });
+      }
+
+      if (action === 'update_notes') {
+        const { orderId, orderNumber, notes } = body;
+        const targetId = orderId || orderNumber;
+        const ok = await updateInternalNotesDb(targetId, notes);
+        return res.status(200).json({ success: ok });
+      }
+
+      // 8. Criação de Pedido
+      console.log(`[API/orders] [${now}] Requisição de criação de pedido recebida.`);
       if (!body || !body.customerName || !body.items || !Array.isArray(body.items) || body.items.length === 0) {
+        console.warn('[API/orders] Rejeitado: Dados incompletos ou carrinho vazio.');
         return res.status(400).json({
           success: false,
           error: 'Dados do pedido incompletos ou carrinho vazio.',
         });
       }
 
-      // 1. Validar se a loja está aberta
-      if (supabase) {
-        try {
-          const { data: storeSettings } = await supabase
-            .from('store_settings')
-            .select('is_open')
-            .eq('id', 'default')
-            .single();
-
-          if (storeSettings && storeSettings.is_open === false) {
-            return res.status(400).json({
-              success: false,
-              code: 'STORE_CLOSED',
-              message: 'A loja está fechada e não está recebendo pedidos no momento.',
-            });
-          }
-        } catch {}
+      // Validar estritamente se a loja está aberta (Backend Enforcement)
+      const storeOpen = await isStoreOpenDb();
+      console.log(`[API/orders] Status da loja: ${storeOpen ? 'ABERTA' : 'FECHADA'}`);
+      if (!storeOpen) {
+        return res.status(409).json({
+          success: false,
+          code: 'STORE_CLOSED',
+          message: 'A loja está fechada e não está recebendo pedidos.',
+        });
       }
 
-      // 2. Buscar catálogo atualizado do Supabase para validação dinâmica de preços
+      // 8.1 Verificação de Idempotência (Prevenção de duplicidade por duplo clique)
+      const idempotencyKey = body.idempotencyKey || body.clientOrderId;
+      if (idempotencyKey) {
+        const all = await listAllOrders({ includeArchived: true, includeDeleted: false });
+        const existing = all.find(o => (o as any).idempotency_key === idempotencyKey);
+        if (existing) {
+          console.log(`[API/orders] Idempotência acionada para chave: ${idempotencyKey} -> Pedido #${existing.order_number}`);
+          return res.status(200).json({
+            success: true,
+            orderNumber: existing.order_number,
+            orderId: existing.id || existing.order_number,
+            accessToken: existing.access_token,
+            status: existing.status,
+            message: 'Pedido já recebido e processado.',
+          });
+        }
+      }
+
+      // Buscar catálogo atualizado do Supabase
       let dbProductsMap: Record<string, any> = {};
       if (supabase) {
         try {
@@ -575,7 +576,7 @@ export default async function handler(req: any, res: any) {
         } catch {}
       }
 
-      // 3. Recalcular e validar cada produto
+      // Recalcular e validar cada produto
       let calculatedSubtotal = 0;
       const parsedItems = body.items.map((item: any) => {
         const qty = Math.max(1, Number(item.quantity) || 1);
@@ -585,12 +586,10 @@ export default async function handler(req: any, res: any) {
 
         let officialUnitPrice = Number(item.unitPrice) || 0;
 
-        // Se o produto está no Supabase, usa o preço atualizado pelo administrador
         if (dbProductsMap[prodId]) {
           const dbProd = dbProductsMap[prodId];
           officialUnitPrice = Number(dbProd.promotional_price || dbProd.price) || officialUnitPrice;
         } else {
-          // Fallback para catálogo
           const catalogItem = DEFAULT_CATALOG[prodId] || Object.entries(DEFAULT_CATALOG).find(([k]) => prodName.toLowerCase().includes(k.replace('prod_', '').replace('combo_', '').replace(/_/g, ' ')))?.[1];
           if (catalogItem) {
             if (sizeStr && catalogItem.sizes && catalogItem.sizes[sizeStr]) {
@@ -601,7 +600,6 @@ export default async function handler(req: any, res: any) {
           }
         }
 
-        // Se houver adicionais extras
         if (Array.isArray(item.additionals) && item.additionals.length > 0 && Number(item.unitPrice) > officialUnitPrice) {
           officialUnitPrice = Number(item.unitPrice);
         }
@@ -630,35 +628,36 @@ export default async function handler(req: any, res: any) {
       }
 
       const total = Number((calculatedSubtotal + deliveryFee).toFixed(2));
-      const orderNumber = body.orderNumber || `PED-${Math.floor(1000 + Math.random() * 9000)}`;
+      // Geração estrita do número do pedido no backend (PED-XXXX)
+      const orderNumber = `PED-${Math.floor(1000 + Math.random() * 9000)}`;
       const accessToken = generateRandomToken();
-      const now = new Date().toISOString();
       const rawPhone = body.customerPhone ? String(body.customerPhone).trim() : null;
       const normalized = rawPhone ? normalizePhone(rawPhone) : null;
 
-      const orderData = {
+      console.log(`[API/orders] Pedido validado: cliente="${body.customerName}", modalidade=${fulfillmentType}, itens=${parsedItems.length}, total=R$ ${total.toFixed(2)}`);
+
+      const orderData: DbOrder = {
         order_number: orderNumber,
         access_token: accessToken,
         customer_name: String(body.customerName).trim(),
-        customer_phone: rawPhone,
+        customer_phone: rawPhone || undefined,
         fulfillment_type: fulfillmentType,
-        street: body.street || body.address?.street || null,
-        number: body.number || body.address?.number || null,
-        neighborhood: body.neighborhood || body.address?.neighborhood || null,
-        complement: body.complement || body.address?.complement || null,
+        street: body.street || body.address?.street || undefined,
+        number: body.number || body.address?.number || undefined,
+        neighborhood: body.neighborhood || body.address?.neighborhood || undefined,
+        complement: body.complement || body.address?.complement || undefined,
         items: parsedItems,
         subtotal: Number(calculatedSubtotal.toFixed(2)),
         delivery_fee: Number(deliveryFee.toFixed(2)),
         total,
         payment_method: body.paymentMethod || 'delivery',
         status: 'new',
-        notes: body.notes || body.generalNotes || null,
+        notes: body.notes || body.generalNotes || undefined,
         is_archived: false,
-        created_at: now,
-        updated_at: now,
+        idempotency_key: idempotencyKey || undefined,
       };
 
-      // 4. Cadastrar / Atualizar Cliente Automaticamente
+      // Atualizar Cliente
       if (supabase && normalized) {
         try {
           const { data: existingCustomer } = await supabase
@@ -692,150 +691,63 @@ export default async function handler(req: any, res: any) {
         } catch {}
       }
 
-      // 5. Salvar Pedido no Supabase
-      if (supabase) {
-        try {
-          const { data, error } = await supabase
-            .from('orders')
-            .insert({
-              order_number: orderData.order_number,
-              access_token: orderData.access_token,
-              customer_name: orderData.customer_name,
-              customer_phone: orderData.customer_phone,
-              fulfillment_type: orderData.fulfillment_type,
-              street: orderData.street,
-              number: orderData.number,
-              neighborhood: orderData.neighborhood,
-              complement: orderData.complement,
-              items: orderData.items,
-              subtotal: orderData.subtotal,
-              delivery_fee: orderData.delivery_fee,
-              total: orderData.total,
-              payment_method: orderData.payment_method,
-              status: 'new',
-              notes: orderData.notes,
-              is_archived: false,
-            })
-            .select()
-            .single();
-
-          if (!error && data) {
-            // Inserir histórico inicial
-            await supabase.from('order_status_history').insert({
-              order_id: data.id,
-              order_number: data.order_number,
-              previous_status: null,
-              new_status: 'new',
-              changed_by: 'cliente',
-              reason: 'Pedido finalizado pelo cliente no site',
-              created_at: now,
-            });
-
-            // Inserir notificação inicial
-            await supabase.from('order_notifications').insert({
-              order_id: data.id,
-              order_number: data.order_number,
-              status: 'new',
-              message: `Recebemos seu pedido #${data.order_number}. Em instantes vamos confirmar.`,
-              channel: 'app_timeline',
-              sent_at: now,
-            });
-
-            return res.status(201).json({
-              success: true,
-              orderId: data.id || data.order_number,
-              orderNumber: data.order_number,
-              accessToken: data.access_token,
-              trackingUrl: `/pedido/${data.order_number}?token=${data.access_token}`,
-              total: data.total,
-              status: 'new',
-              order: data,
-            });
-          }
-        } catch (dbEx) {
-          console.error('[Supabase Order Insert Exception]:', dbEx);
-        }
-      }
-
-      // Fallback em memória
-      const memoryOrder = {
-        ...orderData,
-        id: `ord_${Date.now()}_${Math.floor(1000 + Math.random() * 9000)}`,
-      };
-      memoryOrders.unshift(memoryOrder);
+      // Inserir Pedido usando o serviço unificado de banco
+      console.log(`[API/orders] Gravando pedido #${orderNumber} no banco...`);
+      const savedOrder = await insertOrder(orderData);
+      console.log(`[API/orders] ✅ Pedido #${savedOrder.order_number} gravado com sucesso! ID: ${savedOrder.id}`);
 
       return res.status(201).json({
         success: true,
-        orderId: memoryOrder.id,
-        orderNumber: memoryOrder.order_number,
-        accessToken: memoryOrder.access_token,
-        trackingUrl: `/pedido/${memoryOrder.order_number}?token=${memoryOrder.access_token}`,
-        total: memoryOrder.total,
-        status: 'new',
-        order: memoryOrder,
+        order: {
+          ...savedOrder,
+          id: savedOrder.id || savedOrder.order_number,
+          orderNumber: savedOrder.order_number,
+          status: savedOrder.status || 'new',
+        },
+        orderId: savedOrder.id || savedOrder.order_number,
+        orderNumber: savedOrder.order_number,
+        accessToken: savedOrder.access_token,
+        trackingUrl: `/pedido/${savedOrder.order_number}?token=${savedOrder.access_token}`,
+        total: savedOrder.total,
+        status: savedOrder.status,
       });
-
     } catch (err: any) {
+      console.error('[API/orders] ❌ Erro interno ao gravar pedido:', err);
       return res.status(500).json({
         success: false,
-        error: 'Erro interno ao salvar pedido.',
-        message: err?.message,
+        error: 'Erro interno ao processar pedido.',
+        details: err?.message,
       });
     }
   }
 
-  // PATCH: Atualizar Pedido
+  // PATCH: Atualização atômica de pedidos
   if (req.method === 'PATCH') {
     try {
       let body = req.body;
       if (typeof body === 'string') {
-        try {
-          body = JSON.parse(body);
-        } catch {}
+        try { body = JSON.parse(body); } catch {}
       }
 
-      const { orderId, status, cancellationReason, internalNotes, isArchived } = body || {};
-      const orderIdentifier = orderId || body?.orderNumber || body?.id;
+      const { orderId, orderNumber, status, internalNotes, isArchived, cancellationReason, changedBy = 'admin' } = body || {};
+      const orderIdentifier = orderId || orderNumber;
 
       if (!orderIdentifier) {
         return res.status(400).json({ error: 'orderId ou orderNumber é obrigatório' });
       }
 
-      const now = new Date().toISOString();
-      const isIdUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderIdentifier);
-
-      const updateData: any = { updated_at: now };
-      if (status) updateData.status = status;
-      if (status === 'done') updateData.completed_at = now;
-      if (status === 'cancelled' && cancellationReason) updateData.cancellation_reason = cancellationReason;
-      if (internalNotes !== undefined) updateData.internal_notes = internalNotes;
-      if (isArchived !== undefined) updateData.is_archived = isArchived;
-
-      if (supabase) {
-        try {
-          let query = supabase.from('orders').update(updateData);
-          if (isIdUuid) {
-            query = query.eq('id', orderIdentifier);
-          } else {
-            query = query.eq('order_number', orderIdentifier);
-          }
-
-          const { data, error } = await query.select().maybeSingle();
-          if (!error && data) {
-            return res.status(200).json({ success: true, order: data });
-          }
-        } catch (e) {
-          console.warn('[Supabase PATCH error]:', e);
-        }
+      let updated: any = null;
+      if (status) {
+        updated = await updateOrderStatusDb(orderIdentifier, status, cancellationReason, changedBy);
+      }
+      if (internalNotes !== undefined) {
+        await updateInternalNotesDb(orderIdentifier, internalNotes);
+      }
+      if (isArchived !== undefined) {
+        await archiveOrderDb(orderIdentifier, isArchived, changedBy);
       }
 
-      const mem = memoryOrders.find(o => o.id === orderIdentifier || o.order_number === orderIdentifier);
-      if (mem) {
-        Object.assign(mem, updateData);
-        return res.status(200).json({ success: true, order: mem });
-      }
-
-      return res.status(200).json({ success: true, order: { id: orderIdentifier, ...updateData } });
+      return res.status(200).json({ success: true, order: updated || { id: orderIdentifier, status } });
     } catch (err: any) {
       return res.status(500).json({ error: 'Erro ao atualizar pedido', message: err?.message });
     }
