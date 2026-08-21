@@ -63,11 +63,13 @@ import {
   ChevronUp,
   ExternalLink,
   Filter,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Bike,
+  Radio
 } from 'lucide-react';
 import type { Product, CategoryInfo, AdditionalItem, ProductSize } from '../../types';
 import { AdminLiveDeliveries } from './AdminLiveDeliveries';
-import { createDeliveryOffer } from '../../services/deliveryService';
+import { createDeliveryOffer, fetchDeliveryDrivers } from '../../services/deliveryService';
 import {
   fetchAllOrders,
   updateOrderStatus,
@@ -822,14 +824,13 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
     return orders.filter(o => !o.deleted_at && !o.is_archived && !['cancelled', 'done', 'completed'].includes(o.status));
   }, [orders]);
 
-  const countAll = orders.filter(o => !o.deleted_at && !o.is_archived).length;
+  const countTodayAll = orders.filter(o => !o.deleted_at && !o.is_archived && (ordersPeriodFilter !== 'todos' || getSaoPauloDate(o.created_at) === todaySP)).length;
   const countNew = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'new').length;
-  const countConfirmed = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'confirmed').length;
-  const countPreparing = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'preparing').length;
+  const countPreparing = orders.filter(o => !o.deleted_at && !o.is_archived && (o.status === 'preparing' || o.status === 'confirmed')).length;
   const countReadyPickup = orders.filter(o => !o.deleted_at && !o.is_archived && o.status === 'ready_for_pickup').length;
   const countDelivering = orders.filter(o => !o.deleted_at && !o.is_archived && (o.status === 'delivering' || o.status === 'out_for_delivery')).length;
-  const countDone = orders.filter(o => !o.deleted_at && (o.status === 'done' || o.status === 'completed')).length;
-  const countCancelled = orders.filter(o => !o.deleted_at && o.status === 'cancelled').length;
+  const countDone = orders.filter(o => !o.deleted_at && (o.status === 'done' || o.status === 'completed') && (ordersPeriodFilter !== 'todos' || getSaoPauloDate(o.created_at) === todaySP)).length;
+  const countCancelled = orders.filter(o => !o.deleted_at && o.status === 'cancelled' && (ordersPeriodFilter !== 'todos' || getSaoPauloDate(o.created_at) === todaySP)).length;
   const countArchived = orders.filter(o => !o.deleted_at && o.is_archived).length;
 
   const lastUpdateFormatted = useMemo(() => {
@@ -1610,12 +1611,11 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
             {/* ABAS ARREDONDADAS (PILLS) */}
             <div className="flex gap-2 overflow-x-auto pb-1.5 no-scrollbar text-xs sm:text-sm">
               {[
-                { id: 'all', label: 'Todos', count: countAll },
+                { id: 'all', label: 'Todos do dia', count: countTodayAll },
                 { id: 'new', label: 'Novos', count: countNew, isAlert: true },
-                { id: 'confirmed', label: 'Confirmados', count: countConfirmed },
                 { id: 'preparing', label: 'Em preparo', count: countPreparing },
-                { id: 'ready_for_pickup', label: 'Prontos', count: countReadyPickup },
                 { id: 'delivering', label: 'Em entrega', count: countDelivering },
+                { id: 'ready_for_pickup', label: 'Prontos', count: countReadyPickup },
                 { id: 'done', label: 'Concluídos', count: countDone },
                 { id: 'cancelled', label: 'Cancelados', count: countCancelled },
               ].map(tab => {
@@ -1643,6 +1643,51 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
               })}
             </div>
 
+            {/* SEÇÃO DE ENTREGADORES ATIVOS QUANDO NA ABA EM ENTREGA */}
+            {(statusFilter === 'delivering' || statusFilter === 'all') && (
+              <div className="bg-white rounded-2xl border border-gray-200 p-4 shadow-2xs space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
+                    <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider flex items-center gap-1.5">
+                      <Bike className="w-4 h-4 text-blue-600" />
+                      <span>Entregadores da Loja (Prontos para Despacho)</span>
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setActiveTab('entregadores')}
+                    className="text-[11px] font-bold text-[#69318A] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Abrir Mapa GPS Completo</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  {[
+                    { name: 'Lucas Motoboy', vehicle: 'Moto (BRA2E19)', phone: '(13) 99111-2222', status: 'Disponível' },
+                    { name: 'Marcos Ciclista', vehicle: 'Bicicleta', phone: '(13) 99222-3333', status: 'Disponível' },
+                    { name: 'Rafael Santos', vehicle: 'Moto (SPO4F88)', phone: '(13) 99333-4444', status: 'Disponível' },
+                  ].map((drv, idx) => (
+                    <div key={idx} className="p-2.5 bg-gray-50/80 rounded-xl border border-gray-200/80 flex items-center justify-between text-xs">
+                      <div>
+                        <span className="font-bold text-gray-900 block">{drv.name}</span>
+                        <span className="text-[11px] text-gray-500">{drv.vehicle} • {drv.phone}</span>
+                      </div>
+                      <a
+                        href={`https://wa.me/55${drv.phone.replace(/\D/g, '')}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-2 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-[10px] font-bold"
+                      >
+                        WhatsApp
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* LISTAGEM DE CARDS OU TABELA */}
             <div className="space-y-4">
               {(() => {
@@ -1653,13 +1698,16 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                     // 1. Filtro por Aba de Status
                     let matchesStatus = false;
                     if (statusFilter === 'all') {
-                      matchesStatus = !order.is_archived;
+                      // Na aba "Todos do dia", filtra pedidos do dia atual por padrão (zerando a cada novo dia)
+                      if (ordersPeriodFilter === 'todos') {
+                        matchesStatus = !order.is_archived && getSaoPauloDate(order.created_at) === todaySP;
+                      } else {
+                        matchesStatus = !order.is_archived;
+                      }
                     } else if (statusFilter === 'new') {
                       matchesStatus = !order.is_archived && order.status === 'new';
-                    } else if (statusFilter === 'confirmed') {
-                      matchesStatus = !order.is_archived && order.status === 'confirmed';
                     } else if (statusFilter === 'preparing') {
-                      matchesStatus = !order.is_archived && order.status === 'preparing';
+                      matchesStatus = !order.is_archived && (order.status === 'preparing' || order.status === 'confirmed');
                     } else if (statusFilter === 'ready_for_pickup') {
                       matchesStatus = !order.is_archived && order.status === 'ready_for_pickup';
                     } else if (statusFilter === 'delivering') {
@@ -1726,7 +1774,7 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                       <div className="space-y-1">
                         <h3 className="text-base font-bold text-gray-900">Nenhum pedido encontrado</h3>
                         <p className="text-xs sm:text-sm text-gray-500 max-w-sm mx-auto">
-                          Não há pedidos nesta etapa ou com os filtros aplicados. Novos pedidos aparecerão aqui em tempo real.
+                          Não há pedidos nesta etapa. Novos pedidos realizados pelos clientes aparecerão aqui em tempo real.
                         </p>
                       </div>
                     </div>
@@ -1956,38 +2004,17 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                               </button>
                               <button
                                 disabled={isUpdating}
-                                onClick={() => handleUpdateStatus(orderId, 'confirmed')}
+                                onClick={() => handleUpdateStatus(orderId, 'preparing')}
                                 className="px-4 py-2 bg-black hover:bg-zinc-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                               >
                                 <CheckCircle2 className="w-4 h-4" />
-                                <span>Confirmar pedido</span>
+                                <span>✓ Aceitar e Preparar</span>
                               </button>
                             </>
                           )}
 
-                          {/* 2. SE STATUS === CONFIRMADO */}
-                          {order.status === 'confirmed' && (
-                            <>
-                              <button
-                                disabled={isUpdating}
-                                onClick={() => setCancellingOrderId(order.order_number)}
-                                className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-xl text-xs font-bold transition-all border border-red-200 cursor-pointer disabled:opacity-50"
-                              >
-                                Cancelar
-                              </button>
-                              <button
-                                disabled={isUpdating}
-                                onClick={() => handleUpdateStatus(orderId, 'preparing')}
-                                className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                              >
-                                <ChefHat className="w-4 h-4" />
-                                <span>Iniciar preparo</span>
-                              </button>
-                            </>
-                          )}
-
-                          {/* 3. SE STATUS === EM PREPARO */}
-                          {order.status === 'preparing' && (
+                          {/* 2. SE STATUS === EM PREPARO OU CONFIRMADO */}
+                          {(order.status === 'preparing' || order.status === 'confirmed') && (
                             <>
                               <button
                                 disabled={isUpdating}
@@ -2003,22 +2030,44 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                                   className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                                 >
                                   <Store className="w-4 h-4" />
-                                  <span>Pronto para retirada</span>
+                                  <span>🏪 Pronto para retirada</span>
                                 </button>
                               ) : (
-                                <button
-                                  disabled={isUpdating}
-                                  onClick={() => handleUpdateStatus(orderId, 'delivering')}
-                                  className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
-                                >
-                                  <Truck className="w-4 h-4" />
-                                  <span>Saiu para entrega</span>
-                                </button>
+                                <>
+                                  <button
+                                    disabled={isUpdating}
+                                    onClick={async () => {
+                                      try {
+                                        const data = await createDeliveryOffer(order.order_number, order.id, order.delivery_fee || 5.00);
+                                        if (data && data.success) {
+                                          setToastMessage({ text: `Corrida do pedido #${order.order_number} despachada para os entregadores!`, type: 'success' });
+                                          setActiveTab('entregadores');
+                                        } else {
+                                          alert(data?.error || 'Erro ao despachar corrida.');
+                                        }
+                                      } catch {
+                                        alert('Erro ao despachar corrida.');
+                                      }
+                                    }}
+                                    className="px-3 py-2 bg-purple-50 hover:bg-purple-100 text-[#69318A] border border-purple-200 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                                  >
+                                    <MapPin className="w-3.5 h-3.5" />
+                                    <span>📍 Despachar</span>
+                                  </button>
+                                  <button
+                                    disabled={isUpdating}
+                                    onClick={() => handleUpdateStatus(orderId, 'delivering')}
+                                    className="px-4 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                                  >
+                                    <Truck className="w-4 h-4" />
+                                    <span>🛵 Saiu para entrega</span>
+                                  </button>
+                                </>
                               )}
                             </>
                           )}
 
-                          {/* 4. SE STATUS === EM ENTREGA */}
+                          {/* 3. SE STATUS === EM ENTREGA */}
                           {(order.status === 'delivering' || order.status === 'out_for_delivery') && (
                             <button
                               disabled={isUpdating}
@@ -2026,11 +2075,11 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                             >
                               <CheckCircle2 className="w-4 h-4" />
-                              <span>Confirmar entrega</span>
+                              <span>✓ Confirmar entrega (Entregue)</span>
                             </button>
                           )}
 
-                          {/* 5. SE STATUS === PRONTO PARA RETIRADA */}
+                          {/* 4. SE STATUS === PRONTO PARA RETIRADA */}
                           {order.status === 'ready_for_pickup' && (
                             <button
                               disabled={isUpdating}
@@ -2038,11 +2087,11 @@ export const AdminDashboard: React.FC<{ onLogout: () => void }> = ({ onLogout })
                               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                             >
                               <CheckCircle2 className="w-4 h-4" />
-                              <span>Confirmar retirada</span>
+                              <span>✓ Confirmar retirada (Entregue)</span>
                             </button>
                           )}
 
-                          {/* 6. CONCLUÍDOS / CANCELADOS */}
+                          {/* 5. CONCLUÍDOS / CANCELADOS */}
                           {['done', 'completed', 'cancelled'].includes(order.status) && (
                             <>
                               <button
